@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <!-- Deep nocturnal background -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1120" />
+      <stop offset="50%" stop-color="#070a14" />
+      <stop offset="100%" stop-color="#03050a" />
+    </linearGradient>
+
+    <!-- Subtle Blue Gradient (Left Soul) -->
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#93c5fd" />
+      <stop offset="100%" stop-color="#60a5fa" />
+    </linearGradient>
+
+    <!-- Subtle Lavender/Violet Gradient (Right Soul) -->
+    <linearGradient id="violetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c084fc" />
+      <stop offset="100%" stop-color="#818cf8" />
+    </linearGradient>
+
+    <!-- Soft Nexus Glow (Intersection point) -->
+    <linearGradient id="nexusGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e0e7ff" />
+      <stop offset="100%" stop-color="#a5b4fc" />
+    </linearGradient>
+  </defs>
+
+  <!-- Deep Canvas Base -->
+  <rect width="512" height="512" rx="128" fill="url(#bg)" />
+
+  <!-- Ultra-subtle border ring -->
+  <rect width="510" height="510" x="1" y="1" rx="127" stroke="#ffffff" stroke-opacity="0.06" stroke-width="1.5" />
+
+  <!-- Minimalist Abstract Symbol: Two Interlocking Geometrical Rings (Two Lives / Togetherness) -->
+  <!-- Left Ring -->
+  <circle
+    cx="220"
+    cy="256"
+    r="78"
+    stroke="url(#blueGrad)"
+    stroke-width="14"
+    stroke-linecap="round"
+  />
+
+  <!-- Right Ring -->
+  <circle
+    cx="292"
+    cy="256"
+    r="78"
+    stroke="url(#violetGrad)"
+    stroke-width="14"
+    stroke-linecap="round"
+  />
+
+  <!-- Harmonious Shared Intersection Anchor Point -->
+  <circle cx="256" cy="256" r="6" fill="url(#nexusGrad)" />
+</svg>

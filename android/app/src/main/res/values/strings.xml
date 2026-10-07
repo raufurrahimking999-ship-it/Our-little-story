@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Our little story</string>
+    <string name="title_activity_main">Our little story</string>
+    <string name="package_name">com.heartbeat.lovecounter</string>
+    <string name="custom_url_scheme">com.heartbeat.lovecounter</string>
+</resources>
