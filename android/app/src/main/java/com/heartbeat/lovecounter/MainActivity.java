@@ -82,6 +82,17 @@ public class MainActivity extends BridgeActivity {
 )
 class PermissionBridgePlugin extends Plugin {
 
+    public static boolean hasAudioPermission(Context context) {
+        if (context == null) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            boolean audioGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED;
+            if (audioGranted) return true;
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        } else {
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        }
+    }
+
     private String getRequiredAudioPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             return Manifest.permission.READ_MEDIA_AUDIO;
@@ -93,33 +104,28 @@ class PermissionBridgePlugin extends Plugin {
     @PluginMethod
     public void checkAudioPermission(PluginCall call) {
         JSObject ret = new JSObject();
-        String permission = getRequiredAudioPermission();
+        boolean granted = hasAudioPermission(getContext());
         
-        // Directly check OS permission status (failsafe)
-        int result = ContextCompat.checkSelfPermission(getContext(), permission);
-        
-        String status = "prompt";
-        if (result == PackageManager.PERMISSION_GRANTED) {
-            status = "granted";
-        } else {
-            android.app.Activity activity = getActivity();
-            if (activity != null && ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)) {
-                status = "prompt";
-            } else {
-                status = "prompt"; // Default to prompt to allow requesting natively
-            }
+        if (granted) {
+            ret.put("status", "granted");
+            call.resolve(ret);
+            return;
         }
         
-        ret.put("status", status);
+        String permission = getRequiredAudioPermission();
+        android.app.Activity activity = getActivity();
+        if (activity != null && ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)) {
+            ret.put("status", "prompt");
+        } else {
+            ret.put("status", "denied");
+        }
+        
         call.resolve(ret);
     }
 
     @PluginMethod
     public void requestAudioPermission(PluginCall call) {
-        String permission = getRequiredAudioPermission();
-        
-        // If already granted, resolve immediately
-        if (ContextCompat.checkSelfPermission(getContext(), permission) == PackageManager.PERMISSION_GRANTED) {
+        if (hasAudioPermission(getContext())) {
             JSObject ret = new JSObject();
             ret.put("granted", true);
             call.resolve(ret);
@@ -136,11 +142,7 @@ class PermissionBridgePlugin extends Plugin {
     @PermissionCallback
     private void audioCallback(PluginCall call) {
         JSObject ret = new JSObject();
-        String permission = getRequiredAudioPermission();
-        
-        // Always query the real Android OS directly to bypass any out-of-sync Capacitor states
-        boolean granted = ContextCompat.checkSelfPermission(getContext(), permission) == PackageManager.PERMISSION_GRANTED;
-        
+        boolean granted = hasAudioPermission(getContext());
         ret.put("granted", granted);
         call.resolve(ret);
     }
@@ -366,11 +368,7 @@ class NativeAudioPlugin extends Plugin {
         JSObject ret = new JSObject();
         com.getcapacitor.JSArray songList = new com.getcapacitor.JSArray();
 
-        String permission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU 
-            ? Manifest.permission.READ_MEDIA_AUDIO 
-            : Manifest.permission.READ_EXTERNAL_STORAGE;
-            
-        if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
+        if (!PermissionBridgePlugin.hasAudioPermission(context)) {
             android.util.Log.w("NativeAudio", "Cannot scan device audio: permission not granted.");
             ret.put("songs", songList);
             call.resolve(ret);
@@ -389,8 +387,16 @@ class NativeAudioPlugin extends Plugin {
             android.provider.MediaStore.Audio.Media.DISPLAY_NAME
         };
 
-        // Filter out audio clips under 3 seconds (notifications, clicks), but keep all songs
-        String selection = android.provider.MediaStore.Audio.Media.DURATION + " >= 3000";
+        // Filter out ringtones, alarms, and notifications, but keep all genuine music tracks
+        String selection = "(" + android.provider.MediaStore.Audio.Media.IS_MUSIC + " != 0 OR "
+            + android.provider.MediaStore.Audio.Media.IS_MUSIC + " IS NULL) AND ("
+            + android.provider.MediaStore.Audio.Media.IS_NOTIFICATION + " = 0 OR "
+            + android.provider.MediaStore.Audio.Media.IS_NOTIFICATION + " IS NULL) AND ("
+            + android.provider.MediaStore.Audio.Media.IS_ALARM + " = 0 OR "
+            + android.provider.MediaStore.Audio.Media.IS_ALARM + " IS NULL) AND ("
+            + android.provider.MediaStore.Audio.Media.IS_RINGTONE + " = 0 OR "
+            + android.provider.MediaStore.Audio.Media.IS_RINGTONE + " IS NULL)";
+
         String sortOrder = android.provider.MediaStore.Audio.Media.TITLE + " COLLATE NOCASE ASC";
         android.database.Cursor cursor = null;
 
@@ -411,6 +417,11 @@ class NativeAudioPlugin extends Plugin {
                     String album = cursor.getString(albumCol);
                     long durationMs = cursor.getLong(durationCol);
                     String displayName = nameCol != -1 ? cursor.getString(nameCol) : "";
+
+                    // Exclude sound effects under 3 seconds IF duration is known and > 0
+                    if (durationMs > 0 && durationMs < 3000) {
+                        continue;
+                    }
 
                     if ((title == null || title.trim().isEmpty() || title.equals("<unknown>")) && displayName != null && !displayName.isEmpty()) {
                         title = displayName.replaceFirst("[.][^.]+$", "");
@@ -437,7 +448,7 @@ class NativeAudioPlugin extends Plugin {
                     songObj.put("title", title);
                     songObj.put("artist", artist);
                     songObj.put("album", album);
-                    songObj.put("duration", durationMs > 0 ? (durationMs / 1000.0) : 180.0);
+                    songObj.put("duration", durationMs > 0 ? (durationMs / 1000.0) : 0.0);
                     songObj.put("url", contentUri.toString());
 
                     songList.put(songObj);

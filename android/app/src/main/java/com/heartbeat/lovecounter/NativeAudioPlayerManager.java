@@ -9,12 +9,16 @@ import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
+import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.session.MediaSession;
 import com.getcapacitor.JSObject;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 public class NativeAudioPlayerManager {
@@ -43,18 +47,116 @@ public class NativeAudioPlayerManager {
     private static int currentSongIndex = -1;
     private static String repeatModeString = "all"; // "off", "one", "all"
     private static boolean isShuffle = false;
+    private static boolean hasPlaybackError = false;
 
-    public static String resolveUrl(String url) {
-        if (url == null || url.isEmpty()) return "";
-        if (url.startsWith("__capacitor_file_:///")) {
-            return "file://" + url.substring("__capacitor_file_:///".length() - 1);
-        } else if (url.startsWith("content://") || url.startsWith("file://") || url.startsWith("http://") || url.startsWith("https://")) {
-            return url;
-        } else if (url.startsWith("/") || !url.startsWith("http")) {
-            String cleanPath = url.startsWith("/") ? url.substring(1) : url;
-            return "asset:///public/" + cleanPath;
+    /**
+     * Extracts bundled Hawayein mp3 to app's private files directory if needed.
+     * Guarantees 100% reliable local file descriptor playback, random seeking, and zero network dependency.
+     */
+    public static synchronized File getOrExtractBundledAudio(Context context) {
+        if (context == null) return null;
+        try {
+            File dir = new File(context.getFilesDir(), "bundled_audio");
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+            File targetFile = new File(dir, "hawayein.mp3");
+
+            // If file exists and is intact (> 1MB), return it immediately
+            if (targetFile.exists() && targetFile.length() > 1000000) {
+                return targetFile;
+            }
+
+            // Asset paths to try
+            String[] possibleAssetPaths = {
+                "public/audio/hawayein.mp3",
+                "public/audio/our_song.mp3",
+                "audio/hawayein.mp3",
+                "audio/our_song.mp3"
+            };
+
+            for (String assetPath : possibleAssetPaths) {
+                try (InputStream in = context.getAssets().open(assetPath);
+                     FileOutputStream out = new FileOutputStream(targetFile)) {
+                    byte[] buffer = new byte[65536];
+                    int read;
+                    while ((read = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, read);
+                    }
+                    out.flush();
+                    if (targetFile.length() > 500000) {
+                        android.util.Log.i("NativeAudioPlayer", "Bundled audio extracted to: " + targetFile.getAbsolutePath());
+                        return targetFile;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+
+            return targetFile.exists() && targetFile.length() > 0 ? targetFile : null;
+        } catch (Exception e) {
+            android.util.Log.e("NativeAudioPlayer", "Error extracting bundled audio: " + e.getMessage(), e);
+            return null;
         }
-        return url;
+    }
+
+    public static String resolveUrl(Context context, String url) {
+        if (url == null || url.trim().isEmpty()) return "";
+        String trimmed = url.trim();
+
+        // 1. MediaStore content URI
+        if (trimmed.startsWith("content://")) {
+            return trimmed;
+        }
+
+        // 2. Capacitor File URI
+        if (trimmed.startsWith("__capacitor_file_:///")) {
+            return "file://" + trimmed.substring("__capacitor_file_:///".length() - 1);
+        }
+
+        // 3. Normal File URI
+        if (trimmed.startsWith("file://")) {
+            return trimmed;
+        }
+
+        // 4. Remote Web URL (excluding localhost)
+        if ((trimmed.startsWith("http://") || trimmed.startsWith("https://")) 
+                && !trimmed.contains("localhost")) {
+            return trimmed;
+        }
+
+        // 5. Bundled track (Hawayein / our_song / local audio asset)
+        if (trimmed.contains("hawayein") || trimmed.contains("our_song") || trimmed.contains("/audio/")) {
+            File localFile = getOrExtractBundledAudio(context);
+            if (localFile != null && localFile.exists() && localFile.length() > 0) {
+                return Uri.fromFile(localFile).toString();
+            }
+        }
+
+        // 6. Localhost URL from WebView
+        String cleanPath = trimmed;
+        if (cleanPath.startsWith("http://localhost/") || cleanPath.startsWith("https://localhost/")) {
+            cleanPath = cleanPath.replaceFirst("^https?://localhost/", "");
+        }
+        if (cleanPath.startsWith("/")) {
+            cleanPath = cleanPath.substring(1);
+        }
+
+        // 7. Asset fallback
+        if (context != null) {
+            try {
+                InputStream is = context.getAssets().open("public/" + cleanPath);
+                is.close();
+                return "asset:///public/" + cleanPath;
+            } catch (Exception ignored) {
+                try {
+                    InputStream is = context.getAssets().open(cleanPath);
+                    is.close();
+                    return "asset:///" + cleanPath;
+                } catch (Exception ignored2) {}
+            }
+        }
+
+        return "asset:///public/" + cleanPath;
     }
 
     public static ExoPlayer getPlayer(Context context) {
@@ -83,6 +185,7 @@ public class NativeAudioPlayerManager {
                     if (idx >= 0 && idx < playlist.size()) {
                         currentSongIndex = idx;
                     }
+                    hasPlaybackError = false;
                 }
 
                 @Override
@@ -93,6 +196,15 @@ public class NativeAudioPlayerManager {
                             player.play();
                         }
                     }
+                    if (state == Player.STATE_READY) {
+                        hasPlaybackError = false;
+                    }
+                }
+
+                @Override
+                public void onPlayerError(PlaybackException error) {
+                    android.util.Log.e("NativeAudioPlayer", "ExoPlayer playback error: " + error.getMessage(), error);
+                    hasPlaybackError = true;
                 }
             });
         }
@@ -127,7 +239,6 @@ public class NativeAudioPlayerManager {
         ExoPlayer p = getPlayer(context);
         if (p == null) return;
 
-        // Check if songs list is identical to current playlist
         boolean samePlaylist = false;
         if (songs != null && songs.size() == playlist.size() && !playlist.isEmpty()) {
             samePlaylist = true;
@@ -165,7 +276,7 @@ public class NativeAudioPlayerManager {
 
         List<MediaItem> mediaItems = new ArrayList<>();
         for (SongData song : playlist) {
-            String resolved = resolveUrl(song.url);
+            String resolved = resolveUrl(context, song.url);
             MediaMetadata meta = new MediaMetadata.Builder()
                 .setTitle(song.title)
                 .setArtist(song.artist)
@@ -183,6 +294,7 @@ public class NativeAudioPlayerManager {
         p.setMediaItems(mediaItems, safeIndex, startPositionMs);
         p.prepare();
         p.setPlayWhenReady(playImmediately);
+        hasPlaybackError = false;
     }
 
     public static synchronized void playSongAtIndex(Context context, int index) {
@@ -197,6 +309,7 @@ public class NativeAudioPlayerManager {
             } else {
                 setPlaylist(context, new ArrayList<>(playlist), index, 0, true);
             }
+            hasPlaybackError = false;
         }
     }
 
@@ -207,7 +320,7 @@ public class NativeAudioPlayerManager {
         // Check if song exists in current playlist
         for (int i = 0; i < playlist.size(); i++) {
             SongData s = playlist.get(i);
-            if (s.url.equals(url) || (title != null && s.title.equalsIgnoreCase(title))) {
+            if (s.url.equals(url) || (title != null && !title.isEmpty() && s.title.equalsIgnoreCase(title))) {
                 playSongAtIndex(context, i);
                 return;
             }
@@ -223,10 +336,26 @@ public class NativeAudioPlayerManager {
     public static void play(Context context) {
         ExoPlayer p = getPlayer(context);
         if (p != null) {
+            if (p.getMediaItemCount() == 0) {
+                // Initialize default Hawayein track
+                SongData defaultSong = new SongData(
+                    "bundled-hawayein",
+                    "Hawayein",
+                    "Arijit Singh & Pritam",
+                    "Jab Harry Met Sejal",
+                    "/audio/hawayein.mp3",
+                    291.0
+                );
+                List<SongData> list = new ArrayList<>();
+                list.add(defaultSong);
+                setPlaylist(context, list, 0, 0, true);
+                return;
+            }
             if (p.getPlaybackState() == Player.STATE_ENDED) {
                 p.seekTo(0);
             }
             p.setPlayWhenReady(true);
+            hasPlaybackError = false;
         }
     }
 
@@ -254,6 +383,7 @@ public class NativeAudioPlayerManager {
             p.seekTo(0, 0);
         }
         p.setPlayWhenReady(true);
+        hasPlaybackError = false;
     }
 
     public static void skipPrevious(Context context) {
@@ -268,6 +398,7 @@ public class NativeAudioPlayerManager {
             p.seekTo(p.getMediaItemCount() - 1, 0);
         }
         p.setPlayWhenReady(true);
+        hasPlaybackError = false;
     }
 
     public static void setRepeatMode(Context context, String mode) {
@@ -315,6 +446,7 @@ public class NativeAudioPlayerManager {
             ret.put("isShuffle", false);
             ret.put("repeatMode", "off");
             ret.put("isEnded", false);
+            ret.put("hasError", false);
             return ret;
         }
 
@@ -360,6 +492,7 @@ public class NativeAudioPlayerManager {
         ret.put("isShuffle", p.getShuffleModeEnabled());
         ret.put("repeatMode", repeatModeString);
         ret.put("isEnded", p.getPlaybackState() == Player.STATE_ENDED);
+        ret.put("hasError", hasPlaybackError);
 
         return ret;
     }

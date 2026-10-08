@@ -13,6 +13,152 @@ interface MemoryVaultGalleryModalProps {
   onClose: () => void;
 }
 
+const VaultItemTile: React.FC<{
+  item: VaultItem;
+  globalIdx: number;
+  isSelected: boolean;
+  isSelectMode: boolean;
+  onItemClick: (item: VaultItem, globalIdx: number) => void;
+  onTouchStart: (e: React.TouchEvent, itemId: string) => void;
+  onTouchEnd: () => void;
+  onMouseDown: (e: React.MouseEvent, itemId: string) => void;
+}> = ({
+  item,
+  globalIdx,
+  isSelected,
+  isSelectMode,
+  onItemClick,
+  onTouchStart,
+  onTouchEnd,
+  onMouseDown,
+}) => {
+  const [mediaSrc, setMediaSrc] = useState<string>(item.dataUrl || '');
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!item.dataUrl) {
+      vaultService.ensureDecryptedDataUrl(item).then((url) => {
+        if (isMounted && url) {
+          setMediaSrc(url);
+        }
+      });
+    } else {
+      setMediaSrc(item.dataUrl);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [item.id, item.dataUrl]);
+
+  return (
+    <div
+      onTouchStart={(e) => onTouchStart(e, item.id)}
+      onTouchEnd={onTouchEnd}
+      onTouchMove={onTouchEnd}
+      onMouseDown={(e) => onMouseDown(e, item.id)}
+      onMouseUp={onTouchEnd}
+      onMouseLeave={onTouchEnd}
+      onClick={() => onItemClick(item, globalIdx)}
+      className={`group relative aspect-square rounded-2xl overflow-hidden bg-slate-900 border cursor-pointer shadow transition-all duration-300 ${
+        isSelected
+          ? 'border-indigo-400 ring-2 ring-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.4)]'
+          : 'border-white/10 hover:border-indigo-400/40 hover:shadow-[0_0_20px_rgba(99,102,241,0.15)]'
+      }`}
+    >
+      {item.type === 'video' ? (
+        <div className="w-full h-full relative flex items-center justify-center bg-black">
+          {mediaSrc ? (
+            mediaSrc.startsWith('data:image') ? (
+              <img src={mediaSrc} alt={item.name} className="w-full h-full object-cover opacity-85" />
+            ) : (
+              <video src={mediaSrc} className="w-full h-full object-cover opacity-85" preload="metadata" />
+            )
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-slate-950">
+              <ImageIcon className="w-6 h-6 text-slate-600" />
+            </div>
+          )}
+          <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+            <div className="w-7 h-7 rounded-full bg-indigo-600/90 text-white flex items-center justify-center shadow">
+              <Play className="w-3.5 h-3.5 fill-current" />
+            </div>
+          </div>
+        </div>
+      ) : mediaSrc ? (
+        <img
+          src={mediaSrc}
+          alt={item.name}
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-slate-950 animate-pulse">
+          <ImageIcon className="w-6 h-6 text-slate-700" />
+        </div>
+      )}
+
+      {/* Selection Checkbox */}
+      {(isSelectMode || isSelected) && (
+        <div className="absolute top-1.5 left-1.5 z-10">
+          <div className="text-white drop-shadow">
+            {isSelected ? (
+              <CheckSquare className="w-5 h-5 text-indigo-400 fill-indigo-950" />
+            ) : (
+              <Square className="w-5 h-5 text-white/80" />
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const FullscreenViewerMedia: React.FC<{ item: VaultItem }> = ({ item }) => {
+  const [fullUrl, setFullUrl] = useState<string>(item.dataUrl || '');
+  const [loading, setLoading] = useState<boolean>(!item.dataUrl || item.dataUrl.startsWith('data:image'));
+
+  useEffect(() => {
+    let isMounted = true;
+    vaultService.ensureDecryptedDataUrl(item).then((url) => {
+      if (isMounted) {
+        if (url) setFullUrl(url);
+        setLoading(false);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [item.id]);
+
+  if (loading && !fullUrl) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-16">
+        <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+        <span className="text-xs text-indigo-200/80">Opening media securely...</span>
+      </div>
+    );
+  }
+
+  if (item.type === 'video') {
+    return (
+      <video
+        src={fullUrl}
+        controls
+        autoPlay
+        playsInline
+        className="max-h-[80vh] max-w-full rounded-2xl shadow-2xl border border-white/10 object-contain"
+      />
+    );
+  }
+
+  return (
+    <img
+      src={fullUrl}
+      alt={item.name}
+      className="max-h-[80vh] max-w-full rounded-2xl shadow-2xl border border-white/10 object-contain select-none"
+    />
+  );
+};
+
 export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = ({ isOpen, onClose }) => {
   const [hasPass, setHasPass] = useState<boolean>(false);
   const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
@@ -265,33 +411,47 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
 
     if (vaultStorageNative.isNative()) {
       try {
-        const pickedItems = await vaultStorageNative.pickMediaFiles();
-        if (pickedItems && pickedItems.length > 0) {
-          setIsEncrypting(true);
-
-          for (let i = 0; i < pickedItems.length; i++) {
-            const item = pickedItems[i];
-            await vaultService.addVaultItem({
-              folderId: activeFolderId === 'root' ? undefined : activeFolderId || undefined,
-              type: item.type,
-              mimeType: item.mimeType,
-              name: item.name,
-              base64Data: item.base64Data,
-            });
+        // 1. Check & Request required Android media permissions
+        const hasPerms = await vaultStorageNative.checkMediaPermissions();
+        if (!hasPerms) {
+          const granted = await vaultStorageNative.requestMediaPermissions();
+          if (!granted) {
+            setErrorMsg('Storage permission is required to import photos and videos.');
+            return;
           }
+        }
 
-          refreshData();
+        // 2. Launch native media picker & stream encrypted directly to private storage
+        setIsEncrypting(true);
+        const res = await vaultStorageNative.pickMediaFiles();
+
+        if (res.cancelled) {
+          // User closed/cancelled the picker. Return cleanly.
           return;
         }
+
+        if (res.items && res.items.length > 0) {
+          const success = await vaultService.registerNativeImportedItems(
+            res.items,
+            activeFolderId === 'root' ? undefined : activeFolderId || undefined
+          );
+
+          if (success) {
+            refreshData();
+          } else {
+            setErrorMsg('Failed to save imported media to Vault database.');
+          }
+        }
       } catch (err: any) {
-        console.warn('Native picker cancelled or fallback:', err);
+        console.error('Vault native media import error:', err);
+        setErrorMsg(err.message || 'Error importing media into Vault.');
       } finally {
         setIsEncrypting(false);
-        await vaultStorageNative.cleanupTemp();
       }
+      return;
     }
 
-    // Web Fallback (Standard File Picker)
+    // Web Fallback (Standard File Picker for desktop/browser only)
     fileInputRef.current?.click();
   };
 
@@ -869,6 +1029,26 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
         </div>
       </header>
 
+      {/* Small loading/progress banner during media import */}
+      {isEncrypting && (
+        <div className="mx-4 my-2 p-2.5 rounded-2xl bg-indigo-500/15 border border-indigo-400/30 text-indigo-200 text-xs flex items-center justify-center gap-2 animate-pulse shadow-[0_0_15px_rgba(99,102,241,0.2)]">
+          <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+          <span>Importing & encrypting into private Vault...</span>
+        </div>
+      )}
+
+      {errorMsg && !isSettingsView && (
+        <div className="mx-4 my-2 p-2.5 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between gap-2 shadow-[0_0_15px_rgba(244,63,94,0.15)]">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+            <span>{errorMsg}</span>
+          </div>
+          <button onClick={() => setErrorMsg('')} className="p-1 hover:text-white">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Optional Search Bar */}
       {showSearch && !isSettingsView && (
         <div className="px-4 py-2 bg-slate-900/90 border-b border-white/10">
@@ -1111,51 +1291,17 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
                   const isSelected = selectedItemIds.includes(item.id);
                   const globalIdx = items.findIndex(i => i.id === item.id);
                   return (
-                    <div
+                    <VaultItemTile
                       key={item.id}
-                      onTouchStart={(e) => handleItemTouchStart(e, item.id)}
+                      item={item}
+                      globalIdx={globalIdx}
+                      isSelected={isSelected}
+                      isSelectMode={isSelectMode}
+                      onItemClick={handleItemClick}
+                      onTouchStart={handleItemTouchStart}
                       onTouchEnd={handleItemTouchEnd}
-                      onTouchMove={handleItemTouchEnd}
-                      onMouseDown={(e) => handleItemMouseDown(e, item.id)}
-                      onMouseUp={handleItemTouchEnd}
-                      onMouseLeave={handleItemTouchEnd}
-                      onClick={() => handleItemClick(item, globalIdx)}
-                      className={`group relative aspect-square rounded-2xl overflow-hidden bg-slate-900 border cursor-pointer shadow transition-all duration-300 ${isSelected ? 'border-indigo-400 ring-2 ring-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.4)]' : 'border-white/10 hover:border-indigo-400/40 hover:shadow-[0_0_20px_rgba(99,102,241,0.15)]'}`}
-                    >
-                      {item.type === 'video' ? (
-                        <div className="w-full h-full relative flex items-center justify-center bg-black">
-                          {item.dataUrl ? (
-                            <video src={item.dataUrl} className="w-full h-full object-cover opacity-85" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-slate-950">
-                              <ImageIcon className="w-6 h-6 text-slate-600" />
-                            </div>
-                          )}
-                          <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                            <div className="w-7 h-7 rounded-full bg-indigo-600/90 text-white flex items-center justify-center shadow">
-                              <Play className="w-3.5 h-3.5 fill-current" />
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        item.dataUrl ? (
-                          <img src={item.dataUrl} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center bg-slate-950 animate-pulse">
-                            <ImageIcon className="w-6 h-6 text-slate-700" />
-                          </div>
-                        )
-                      )}
-
-                      {/* Selection Checkbox */}
-                      {(isSelectMode || isSelected) && (
-                        <div className="absolute top-1.5 left-1.5 z-10">
-                          <div className="text-white drop-shadow">
-                            {isSelected ? <CheckSquare className="w-5 h-5 text-indigo-400 fill-indigo-950" /> : <Square className="w-5 h-5 text-white/80" />}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                      onMouseDown={handleItemMouseDown}
+                    />
                   );
                 })}
               </div>
@@ -1212,20 +1358,7 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
 
           {/* Center Media display */}
           <div className="relative flex-1 w-full max-w-4xl flex items-center justify-center overflow-hidden my-auto" onClick={(e) => e.stopPropagation()}>
-            {items[viewerItemIndex].type === 'video' ? (
-              <video
-                src={items[viewerItemIndex].dataUrl}
-                controls
-                autoPlay
-                className="max-h-[80vh] max-w-full rounded-2xl shadow-2xl border border-white/10 object-contain"
-              />
-            ) : (
-              <img
-                src={items[viewerItemIndex].dataUrl}
-                alt={items[viewerItemIndex].name}
-                className="max-h-[80vh] max-w-full rounded-2xl shadow-2xl border border-white/10 object-contain select-none"
-              />
-            )}
+            <FullscreenViewerMedia item={items[viewerItemIndex]} />
 
             {/* Prev / Next navigation */}
             {viewerItemIndex > 0 && (

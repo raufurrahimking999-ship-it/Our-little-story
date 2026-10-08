@@ -1,5 +1,5 @@
 import { vaultCrypto, bufferToBase64, base64ToBuffer } from './vaultCrypto';
-import { vaultStorageNative } from './vaultStorageNative';
+import { vaultStorageNative, PickedMediaResultItem } from './vaultStorageNative';
 
 export interface VaultFolder {
   id: string;
@@ -128,8 +128,10 @@ class VaultService {
   private subscribers = new Set<(unlocked: boolean) => void>();
 
   constructor() {
-    // Note: Do NOT lock the vault on document visibilitychange / blur,
-    // as Android native file picker pauses webview while user selects photos.
+    // Attempt automatic session restoration if Android Activity paused/recreated
+    if (typeof window !== 'undefined') {
+      this.tryRestoreSession().catch(() => {});
+    }
   }
 
   private getEnvelope(): VaultEnvelopeMetadata | null {
@@ -158,6 +160,42 @@ class VaultService {
     return env?.recoveryQ || null;
   }
 
+  private async syncSessionKeyToNative() {
+    const rawKey = vaultCrypto.getRawMasterKeyBytes();
+    if (rawKey) {
+      const b64 = bufferToBase64(rawKey);
+      if (vaultStorageNative.isNative()) {
+        await vaultStorageNative.setSessionKey(b64);
+      }
+      try {
+        sessionStorage.setItem('vault_session_unlocked', 'true');
+        sessionStorage.setItem('vault_session_key', b64);
+      } catch {}
+    }
+  }
+
+  public async tryRestoreSession(): Promise<boolean> {
+    if (this.isUnlocked) return true;
+    try {
+      const isSession = sessionStorage.getItem('vault_session_unlocked') === 'true';
+      const keyBase64 = sessionStorage.getItem('vault_session_key');
+      if (isSession && keyBase64) {
+        const rawKey = base64ToBuffer(keyBase64);
+        const restored = await vaultCrypto.restoreSessionMasterKey(rawKey);
+        if (restored) {
+          this.isUnlocked = true;
+          if (vaultStorageNative.isNative()) {
+            await vaultStorageNative.setSessionKey(keyBase64);
+          }
+          await this.loadItemsFromStore();
+          this.notify();
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
   public async createPassword(password: string, recoveryQ: string, recoveryA: string): Promise<boolean> {
     try {
       const setup = await vaultCrypto.setupNewVault(password, recoveryA);
@@ -167,6 +205,7 @@ class VaultService {
       };
       this.saveEnvelope(envelope);
       this.isUnlocked = true;
+      await this.syncSessionKeyToNative();
       await this.loadItemsFromStore();
       this.notify();
       return true;
@@ -192,6 +231,7 @@ class VaultService {
 
       if (success) {
         this.isUnlocked = true;
+        await this.syncSessionKeyToNative();
         await this.loadItemsFromStore();
         this.notify();
         return true;
@@ -236,6 +276,7 @@ class VaultService {
       };
       this.saveEnvelope(updatedEnv);
       this.isUnlocked = true;
+      await this.syncSessionKeyToNative();
       await this.loadItemsFromStore();
       this.notify();
       return true;
@@ -261,6 +302,7 @@ class VaultService {
       };
       this.saveEnvelope(updatedEnv);
       this.isUnlocked = true;
+      await this.syncSessionKeyToNative();
       this.notify();
       return true;
     } catch {
@@ -275,14 +317,23 @@ class VaultService {
   public lockVault() {
     this.isUnlocked = false;
     vaultCrypto.lock();
+    try {
+      sessionStorage.removeItem('vault_session_unlocked');
+      sessionStorage.removeItem('vault_session_key');
+      sessionStorage.removeItem('vault_is_open');
+    } catch {}
+
     // Revoke all in-memory decrypted Blob URLs to free RAM and ensure privacy
     this.blobUrlCache.forEach((url) => {
       try {
-        URL.revokeObjectURL(url);
+        if (url.startsWith('blob:')) {
+          URL.revokeObjectURL(url);
+        }
       } catch {}
     });
     this.blobUrlCache.clear();
     this.cachedItems = [];
+    vaultStorageNative.clearSessionKey();
     vaultStorageNative.cleanupTemp();
     this.notify();
   }
@@ -379,12 +430,42 @@ class VaultService {
       return [];
     }
 
-    const items = await idbGetAllItems();
+    let items = await idbGetAllItems();
+
+    // Check secondary native manifest for guaranteed persistence across app restart / clear cache
+    if (vaultStorageNative.isNative()) {
+      try {
+        const nativeManifest = await vaultStorageNative.loadManifest();
+        if (nativeManifest.exists && nativeManifest.manifest) {
+          const parsed = JSON.parse(nativeManifest.manifest);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const idbMap = new Map(items.map(i => [i.id, i]));
+            let hasNew = false;
+            for (const nItem of parsed) {
+              if (nItem && nItem.id && !idbMap.has(nItem.id)) {
+                idbMap.set(nItem.id, nItem);
+                await idbSaveItem(nItem);
+                hasNew = true;
+              }
+            }
+            if (hasNew) {
+              items = Array.from(idbMap.values());
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Native manifest sync error:', err);
+      }
+    }
+
     this.cachedItems = items.sort((a, b) => b.dateAdded - a.dateAdded);
 
-    // Pre-decrypt blobs for instant UI display
-    for (const item of this.cachedItems) {
-      this.ensureDecryptedDataUrl(item);
+    // Backup to native manifest
+    if (vaultStorageNative.isNative() && this.cachedItems.length > 0) {
+      try {
+        const toSave = this.cachedItems.map(({ dataUrl, ...rest }) => rest);
+        await vaultStorageNative.saveManifest(JSON.stringify(toSave));
+      } catch {}
     }
 
     return this.cachedItems;
@@ -396,7 +477,56 @@ class VaultService {
   }
 
   /**
-   * Retrieves or generates an in-memory decrypted Blob URL for an item.
+   * Registers items that were imported and encrypted natively on Android.
+   */
+  public async registerNativeImportedItems(
+    pickedItems: PickedMediaResultItem[],
+    folderId?: string
+  ): Promise<boolean> {
+    if (!this.getUnlockedStatus() || !pickedItems || pickedItems.length === 0) return false;
+
+    try {
+      const newItems: VaultItem[] = [];
+
+      for (const item of pickedItems) {
+        const vaultItem: VaultItem = {
+          id: item.id,
+          folderId,
+          type: item.type,
+          mimeType: item.mimeType,
+          name: item.name,
+          dateAdded: item.dateAdded || Date.now(),
+          size: item.size,
+          encryptedPath: item.encryptedPath,
+          dataUrl: item.thumbnailUrl, // Use instant thumbnail for grid display
+        };
+
+        if (item.thumbnailUrl) {
+          this.blobUrlCache.set(item.id, item.thumbnailUrl);
+        }
+
+        await idbSaveItem(vaultItem);
+        newItems.push(vaultItem);
+      }
+
+      this.cachedItems = [...newItems, ...this.cachedItems];
+
+      // Backup manifest to native storage
+      if (vaultStorageNative.isNative()) {
+        const toSave = this.cachedItems.map(({ dataUrl, ...rest }) => rest);
+        await vaultStorageNative.saveManifest(JSON.stringify(toSave));
+      }
+
+      this.notify();
+      return true;
+    } catch (err) {
+      console.error('Failed to register native imported items:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Retrieves or generates an in-memory decrypted Blob URL or stream URL for full-screen viewing/playback.
    */
   public async ensureDecryptedDataUrl(item: VaultItem): Promise<string> {
     if (this.blobUrlCache.has(item.id)) {
@@ -406,43 +536,46 @@ class VaultService {
     }
 
     try {
-      let encryptedBytes: Uint8Array | null = null;
-
       if (vaultStorageNative.isNative()) {
-        const base64Encrypted = await vaultStorageNative.readEncryptedFile(item.id, item.encryptedPath);
-        if (base64Encrypted) {
-          encryptedBytes = base64ToBuffer(base64Encrypted);
+        const decRes = await vaultStorageNative.readDecryptedMedia(item.id, item.encryptedPath);
+        if (decRes.success) {
+          if (decRes.isStream && decRes.streamUrl) {
+            this.blobUrlCache.set(item.id, decRes.streamUrl);
+            item.dataUrl = decRes.streamUrl;
+            return decRes.streamUrl;
+          } else if (decRes.base64Data) {
+            const raw = base64ToBuffer(decRes.base64Data);
+            const mime = item.mimeType || (item.type === 'video' ? 'video/mp4' : 'image/jpeg');
+            const blob = new Blob([raw.buffer as ArrayBuffer], { type: mime });
+            const blobUrl = URL.createObjectURL(blob);
+            this.blobUrlCache.set(item.id, blobUrl);
+            item.dataUrl = blobUrl;
+            return blobUrl;
+          }
         }
       }
 
-      // Fallback to in-database encrypted blob for web or migration
-      if (!encryptedBytes && item.encryptedBlobBase64) {
-        encryptedBytes = base64ToBuffer(item.encryptedBlobBase64);
+      // Web Fallback:
+      if (item.encryptedBlobBase64) {
+        const encryptedBytes = base64ToBuffer(item.encryptedBlobBase64);
+        const decryptedBytes = await vaultCrypto.decryptMediaBytes(encryptedBytes);
+        const mime = item.mimeType || (item.type === 'video' ? 'video/mp4' : 'image/jpeg');
+        const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: mime });
+        const blobUrl = URL.createObjectURL(blob);
+        this.blobUrlCache.set(item.id, blobUrl);
+        item.dataUrl = blobUrl;
+        return blobUrl;
       }
 
-      if (!encryptedBytes || encryptedBytes.length === 0) {
-        return '';
-      }
-
-      // Decrypt using AES-256-GCM
-      const decryptedBytes = await vaultCrypto.decryptMediaBytes(encryptedBytes);
-
-      const mimeType = item.mimeType || (item.type === 'video' ? 'video/mp4' : 'image/jpeg');
-      const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: mimeType });
-      const blobUrl = URL.createObjectURL(blob);
-
-      this.blobUrlCache.set(item.id, blobUrl);
-      item.dataUrl = blobUrl;
-      return blobUrl;
+      return item.dataUrl || '';
     } catch (e) {
       console.warn('Decryption failed for item:', item.id, e);
-      return '';
+      return item.dataUrl || '';
     }
   }
 
   /**
-   * Encrypts and adds a new item to the Vault.
-   * Encryption must complete and be verified on disk before registration.
+   * Encrypts and adds a new item to the Vault (used for web fallback).
    */
   public async addVaultItem(options: {
     folderId?: string;
@@ -478,22 +611,13 @@ class VaultService {
       const itemId = 'item_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
       let encryptedPath: string | undefined;
 
-      // 2. Write to private internal storage
-      if (vaultStorageNative.isNative()) {
-        const writeResult = await vaultStorageNative.writeEncryptedFile(itemId, base64Encrypted);
-        if (!writeResult.success) {
-          throw new Error('Failed to write encrypted file to private internal storage');
-        }
-        encryptedPath = writeResult.filePath;
-      }
-
-      // 3. Create in-memory decrypted Blob URL for instant rendering
+      // 2. Create in-memory decrypted Blob URL for instant rendering
       const mime = options.mimeType || (options.type === 'video' ? 'video/mp4' : 'image/jpeg');
       const blob = new Blob([plainBytes.buffer as ArrayBuffer], { type: mime });
       const blobUrl = URL.createObjectURL(blob);
       this.blobUrlCache.set(itemId, blobUrl);
 
-      // 4. Save metadata to IndexedDB
+      // 3. Save metadata to IndexedDB
       const newItem: VaultItem = {
         id: itemId,
         folderId: options.folderId,
@@ -503,12 +627,20 @@ class VaultService {
         dateAdded: Date.now(),
         size: plainBytes.length,
         encryptedPath,
-        encryptedBlobBase64: vaultStorageNative.isNative() ? undefined : base64Encrypted,
+        encryptedBlobBase64: base64Encrypted,
         dataUrl: blobUrl,
       };
 
       await idbSaveItem(newItem);
       this.cachedItems.unshift(newItem);
+
+      // 4. Backup to native manifest if on native
+      if (vaultStorageNative.isNative()) {
+        const toSave = this.cachedItems.map(({ dataUrl, ...rest }) => rest);
+        await vaultStorageNative.saveManifest(JSON.stringify(toSave));
+      }
+
+      this.notify();
       return true;
     } catch (err) {
       console.error('Failed to encrypt & add vault item:', err);
@@ -529,6 +661,11 @@ class VaultService {
       }
       this.cachedItems = this.cachedItems.filter(i => i.id !== id);
       await idbDeleteItem(id);
+      if (vaultStorageNative.isNative()) {
+        const toSave = this.cachedItems.map(({ dataUrl, ...rest }) => rest);
+        await vaultStorageNative.saveManifest(JSON.stringify(toSave));
+      }
+      this.notify();
       return true;
     } catch {
       return false;
@@ -556,6 +693,11 @@ class VaultService {
 
       this.cachedItems = this.cachedItems.filter(i => !ids.includes(i.id));
       await idbDeleteItemsBatch(ids);
+      if (vaultStorageNative.isNative()) {
+        const toSave = this.cachedItems.map(({ dataUrl, ...rest }) => rest);
+        await vaultStorageNative.saveManifest(JSON.stringify(toSave));
+      }
+      this.notify();
       return true;
     } catch {
       return false;

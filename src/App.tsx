@@ -12,7 +12,27 @@ import { localMusicService } from './services/localMusicService';
 import { SplashScreen } from '@capacitor/splash-screen';
 
 export default function App() {
-  const [isVaultOpen, setIsVaultOpen] = useState<boolean>(false);
+  const [isVaultOpen, setIsVaultOpen] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('vault_is_open') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleOpenVault = () => {
+    try {
+      sessionStorage.setItem('vault_is_open', 'true');
+    } catch {}
+    setIsVaultOpen(true);
+  };
+
+  const handleCloseVault = () => {
+    try {
+      sessionStorage.removeItem('vault_is_open');
+    } catch {}
+    setIsVaultOpen(false);
+  };
 
   useEffect(() => {
     // Initialize native Android daily anniversary notification scheduling
@@ -59,14 +79,14 @@ export default function App() {
           {/* Subtle Vault Entry: Small Lock Icon & Exact Requested Line */}
           <div className="flex flex-col items-center gap-1.5 pt-2 pb-1">
             <button
-              onClick={() => setIsVaultOpen(true)}
+              onClick={handleOpenVault}
               className="p-1.5 rounded-full text-indigo-300/50 hover:text-rose-300 hover:bg-white/[0.04] transition-all active:scale-95 group"
               aria-label="Open Vault"
             >
               <Lock className="w-3.5 h-3.5 transition-transform group-hover:scale-110 drop-shadow-[0_0_8px_rgba(165,180,252,0.3)]" />
             </button>
             <button
-              onClick={() => setIsVaultOpen(true)}
+              onClick={handleOpenVault}
               className="text-[11px] sm:text-xs text-indigo-200/60 hover:text-indigo-100 font-romantic tracking-[0.1em] text-center select-none transition-colors"
             >
               A little place for the moments that mean the most.
@@ -78,7 +98,7 @@ export default function App() {
       {/* Full-Screen Private Gallery Experience */}
       <MemoryVaultGalleryModal
         isOpen={isVaultOpen}
-        onClose={() => setIsVaultOpen(false)}
+        onClose={handleCloseVault}
       />
     </div>
   );

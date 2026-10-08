@@ -528,6 +528,22 @@ export const MusicPlayerCard: React.FC = () => {
                 />
               </div>
 
+              {/* Permission Banner if Audio Permission Denied */}
+              {hasAudioPermission === false && (
+                <div className="flex items-center justify-between p-3.5 rounded-xl bg-indigo-950/60 border border-indigo-400/20 text-xs text-indigo-200 gap-2">
+                  <div className="flex items-center gap-2 min-w-0 pr-1">
+                    <ShieldAlert className="w-4 h-4 text-rose-300 shrink-0" />
+                    <span className="truncate text-[11px] sm:text-xs">Storage/Audio permission needed to list songs from your device.</span>
+                  </div>
+                  <button
+                    onClick={() => permissionService.openAppSettings()}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] shrink-0 active:scale-95 transition-all shadow-md"
+                  >
+                    Open Settings
+                  </button>
+                </div>
+              )}
+
               {/* Song list layout (Single-tone consistent card) */}
               <div className="w-full bg-[#0a1026]/90 border border-indigo-400/15 rounded-2xl p-1 sm:p-2 shadow-xl space-y-1 divide-y divide-white/[0.04]">
                 {filteredSongs.length === 0 ? (
@@ -569,9 +585,16 @@ export const MusicPlayerCard: React.FC = () => {
                             </div>
 
                             <div className="flex flex-col min-w-0">
-                              <span className={`text-xs sm:text-sm font-semibold truncate tracking-wide leading-tight ${isCurrent ? 'text-indigo-200' : 'text-slate-100'}`}>
-                                {song.title}
-                              </span>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className={`text-xs sm:text-sm font-semibold truncate tracking-wide leading-tight ${isCurrent ? 'text-indigo-200' : 'text-slate-100'}`}>
+                                  {song.title}
+                                </span>
+                                {song.isBuiltIn && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-500/20 text-rose-300 font-medium border border-rose-400/30 shrink-0">
+                                    Our Song
+                                  </span>
+                                )}
+                              </div>
                               <span className="text-[10px] sm:text-xs text-slate-400 truncate mt-0.5">
                                 {song.artist || 'Local Audio'}
                               </span>
@@ -592,7 +615,7 @@ export const MusicPlayerCard: React.FC = () => {
                             </button>
 
                             <span className="text-[10px] sm:text-xs font-mono text-slate-400 tabular-nums">
-                              {formatAudioTime(song.duration)}
+                              {song.duration > 0 ? formatAudioTime(song.duration) : '--:--'}
                             </span>
                           </div>
                         </div>

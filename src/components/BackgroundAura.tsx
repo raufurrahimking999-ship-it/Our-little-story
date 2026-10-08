@@ -65,42 +65,72 @@ export const BackgroundAura: React.FC = () => {
     window.addEventListener('resize', setupCanvasSize);
 
     // =========================================================================
-    // 1. REFINED FLOATING HEARTS (Subtle 3D Liquid-Glass Dimensional Appearance)
+    // 1. REFINED FLOATING HEARTS (Individual Organic Spawning & Natural Flow)
     // =========================================================================
-    const heartCount = 20;
     // Elegant palette: midnight-blue, icy lavender, soft violet, whisper of rose
     const heartHues = [225, 240, 255, 270, 330, 345];
 
-    const createHeart = (initialSpread = false, index = 0): HeartParticle => {
-      // Natural size distribution (8px to 18px)
-      const size = 8.0 + Math.random() * 9.5;
-      const depthFactor = (size - 8.0) / 9.5; // 0.0 (distant) to 1.0 (foreground)
+    interface HeartParticle {
+      x: number;
+      y: number;
+      size: number;
+      speedY: number;
+      driftX: number;
+      swayFreq: number;
+      swayPhase: number;
+      swayAmp: number;
+      maxOpacity: number;
+      hue: number;
+      rotation: number;
+      rotSwayAmp: number;
+      scaleVar: number;
+      scalePhase: number;
+    }
 
-      // Distribute evenly across screen width with jitter
-      const sectionWidth = width / heartCount;
-      const x = Math.max(16, Math.min(width - 16, index * sectionWidth + (Math.random() - 0.5) * (sectionWidth * 0.9)));
+    const getMaxHearts = () => {
+      // Natural, uncluttered capacity tuned for slow, graceful drifting
+      return Math.min(10, Math.max(5, Math.floor(width / 60)));
+    };
 
-      // Y positioning: staggered across height initially, resets at bottom on ascension
+    let lastSpawnX = width * 0.5;
+
+    const createSingleHeart = (initialSpread = false, customY?: number): HeartParticle => {
+      // Natural size variation (8.5px to 17px)
+      const size = 8.5 + Math.random() * 8.5;
+      const depthFactor = (size - 8.5) / 8.5; // 0.0 (distant) to 1.0 (foreground)
+
+      // Randomized horizontal position avoiding clustering near recent spawns
+      let x = 24 + Math.random() * (width - 48);
+      if (!initialSpread && Math.abs(x - lastSpawnX) < 45) {
+        // Shift away if too close to last spawn location
+        x = (x + width * 0.45) % (width - 48) + 24;
+      }
+      lastSpawnX = x;
+
+      // Start position: initial scattered screen presence on mount, or strictly below bottom
       let y: number;
       if (initialSpread) {
-        y = Math.random() * height;
+        y = customY !== undefined ? customY : Math.random() * (height * 0.85);
       } else {
-        y = height + 15 + Math.random() * 40;
+        y = height + size + 8 + Math.random() * 25;
       }
 
-      const speedY = 0.22 + depthFactor * 0.12 + Math.random() * 0.14;
-      const driftX = (Math.random() - 0.5) * 0.12;
+      // Natural, slow and graceful upward floating speed
+      const speedY = 0.09 + depthFactor * 0.04 + Math.random() * 0.05;
+      const driftX = (Math.random() - 0.5) * 0.05;
 
-      const swayFreq = 0.0035 + Math.random() * 0.0045;
+      // Ultra-smooth, slow organic sway mechanics (gentle breeze effect)
+      const swayFreq = 0.006 + Math.random() * 0.008;
       const swayPhase = Math.random() * Math.PI * 2;
-      const swayAmp = 0.10 + Math.random() * 0.18;
+      const swayAmp = 0.22 + Math.random() * 0.28;
 
-      // Subtle atmospheric opacity: tightly controlled (0.16 to 0.22) for smooth natural depth
+      // Atmospheric opacity: tightly controlled (0.16 to 0.22) for smooth natural blending
       const maxOpacity = 0.16 + depthFactor * 0.06;
       const hue = heartHues[Math.floor(Math.random() * heartHues.length)];
-      const rotation = (Math.random() - 0.5) * 0.10; // Gentle natural tilt
+      const rotation = (Math.random() - 0.5) * 0.12; // Natural tilt
+      const rotSwayAmp = 0.04 + Math.random() * 0.04;
 
-      const scaleVar = 0.02 + Math.random() * 0.02;
+      const scaleVar = 0.015 + Math.random() * 0.015;
       const scalePhase = Math.random() * Math.PI * 2;
 
       return {
@@ -115,28 +145,49 @@ export const BackgroundAura: React.FC = () => {
         maxOpacity,
         hue,
         rotation,
+        rotSwayAmp,
         scaleVar,
         scalePhase,
-        fadeLimitTop: -15,
       };
     };
 
-    const heartParticles: HeartParticle[] = Array.from({ length: heartCount }, (_, i) =>
-      createHeart(true, i)
-    );
+    // Initialize with only a small, gracefully spaced set of hearts across the screen
+    // so the canvas has subtle ambiance immediately without any sudden burst or cluster
+    const initialHeartCount = Math.min(6, Math.max(3, Math.floor(getMaxHearts() * 0.6)));
+    let activeHearts: HeartParticle[] = [];
+    for (let i = 0; i < initialHeartCount; i++) {
+      const staggeredY = (height * 0.15) + (i / initialHeartCount) * (height * 0.7) + (Math.random() - 0.5) * 40;
+      activeHearts.push(createSingleHeart(true, staggeredY));
+    }
+
+    // Randomized spawn interval generator for natural pacing
+    const getNextSpawnDelay = () => {
+      const roll = Math.random();
+      if (roll < 0.20) {
+        // Occasional gentle pause / natural gap with no new heart
+        return 3200 + Math.random() * 2000; // 3.2s - 5.2s gap
+      } else if (roll < 0.35) {
+        // Occasional smooth follower
+        return 1200 + Math.random() * 800; // 1.2s - 2.0s
+      }
+      // Standard organic interval
+      return 1800 + Math.random() * 1600; // 1.8s - 3.4s
+    };
+
+    let nextSpawnTime = performance.now() + 1000; // First new spawn shortly after mount
 
     // =========================================================================
     // 2. ETHEREAL STARDUST PARTICLES (Delicate, Non-Pulsing Luminous Motes)
     // =========================================================================
-    const stardustCount = 28;
-    const UNIFORM_STARDUST_OPACITY = 0.15;
+    const stardustCount = 26;
+    const UNIFORM_STARDUST_OPACITY = 0.14;
 
     const createStardust = (initialSpread = false): StardustParticle => {
       const x = Math.random() * width;
       const y = initialSpread ? Math.random() * height : height + 10 + Math.random() * 30;
       const radius = 0.8 + Math.random() * 1.0;
-      const speedY = 0.14 + Math.random() * 0.18;
-      const driftX = (Math.random() - 0.5) * 0.08;
+      const speedY = 0.08 + Math.random() * 0.09;
+      const driftX = (Math.random() - 0.5) * 0.05;
       const hue = heartHues[Math.floor(Math.random() * heartHues.length)];
 
       return {
@@ -249,18 +300,35 @@ export const BackgroundAura: React.FC = () => {
       ctx.restore();
     };
 
+    let lastTime = performance.now();
     let tick = 0;
-    const render = () => {
+
+    const render = (now: number) => {
       if (!isRunning) return;
 
-      tick += 1;
+      const dt = Math.min(50, Math.max(8, now - lastTime));
+      lastTime = now;
+      const dtFactor = dt / 16.667; // Normalized to 60fps
+      tick += dtFactor;
+
       ctx.clearRect(0, 0, width, height);
+
+      // =======================================================================
+      // Timed Individual Heart Spawner (No large batches, organic intervals)
+      // =======================================================================
+      if (now >= nextSpawnTime) {
+        const maxLimit = getMaxHearts();
+        if (activeHearts.length < maxLimit) {
+          activeHearts.push(createSingleHeart(false));
+        }
+        nextSpawnTime = now + getNextSpawnDelay();
+      }
 
       // 1. Draw Stardust Particles (Constant non-pulsing soft motes)
       for (let i = 0; i < stardustParticles.length; i++) {
         const s = stardustParticles[i];
-        s.y -= s.speedY;
-        s.x += s.driftX;
+        s.y -= s.speedY * dtFactor;
+        s.x += s.driftX * dtFactor;
 
         if (s.y < -10) {
           stardustParticles[i] = createStardust(false);
@@ -273,50 +341,53 @@ export const BackgroundAura: React.FC = () => {
         drawStardust(s);
       }
 
-      // 2. Draw Floating Hearts (100% Constant Brightness & Soft Blending)
-      for (let i = 0; i < heartParticles.length; i++) {
-        const p = heartParticles[i];
+      // 2. Update & Draw Floating Hearts (Graceful individual ascension)
+      const remainingHearts: HeartParticle[] = [];
 
-        p.y -= p.speedY;
+      for (let i = 0; i < activeHearts.length; i++) {
+        const p = activeHearts[i];
 
-        // Smooth wave trajectory
-        const swayValue = Math.sin(tick * p.swayFreq + p.swayPhase);
-        p.x += p.driftX + swayValue * p.swayAmp;
+        // Smooth vertical ascension
+        p.y -= p.speedY * dtFactor;
 
-        // Smooth subtle scale
-        const currentScale = p.size * (1 + Math.sin(tick * 0.015 + p.scalePhase) * p.scaleVar);
+        // Individualized organic sway & drift
+        p.swayPhase += p.swayFreq * dtFactor;
+        p.x += (p.driftX + Math.sin(p.swayPhase) * p.swayAmp) * dtFactor;
 
-        // Reset if it passes screen top
-        if (p.y < -30) {
-          heartParticles[i] = createHeart(false, i);
+        // Soft natural scale and tilt variation (slow and serene)
+        const currentScale = p.size * (1 + Math.sin(p.scalePhase + tick * 0.008) * p.scaleVar);
+        const currentRot = p.rotation + Math.sin(p.swayPhase * 0.75) * p.rotSwayAmp;
+
+        // Remove naturally once departed past top bounds
+        if (p.y < -35 || p.x < -50 || p.x > width + 50) {
           continue;
         }
 
-        // Screen edge wrapping
-        if (p.x < -30) p.x = width + 30;
-        else if (p.x > width + 30) p.x = -30;
-
-        // Gentle fade only at extreme bottom entry and extreme top exit
+        // Natural edge fade only at extreme bottom entry and extreme top exit
         let opacityFactor = 1.0;
-        const bottomFadeLimit = height * 0.96;
-        const topFadeLimit = 25;
+        const bottomFadeLimit = height - 10;
+        const topFadeLimit = 35;
 
         if (p.y > bottomFadeLimit) {
-          opacityFactor = Math.max(0, (height - p.y) / (height - bottomFadeLimit));
+          opacityFactor = Math.max(0, (height + p.size - p.y) / (p.size + 10));
         } else if (p.y < topFadeLimit) {
           opacityFactor = Math.max(0, p.y / topFadeLimit);
         }
 
-        if (p.y > height) opacityFactor = 0;
+        if (p.y > height + p.size + 15) opacityFactor = 0;
 
         const currentOpacity = p.maxOpacity * opacityFactor;
-        drawSoftHeart(p.x, p.y, currentScale, currentOpacity, p.hue, p.rotation);
+        drawSoftHeart(p.x, p.y, currentScale, currentOpacity, p.hue, currentRot);
+
+        remainingHearts.push(p);
       }
+
+      activeHearts = remainingHearts;
 
       animationFrameId = requestAnimationFrame(render);
     };
 
-    render();
+    animationFrameId = requestAnimationFrame(render);
 
     // Respect tab/app visibility to preserve battery and GPU
     const handleVisibilityChange = () => {
@@ -326,6 +397,8 @@ export const BackgroundAura: React.FC = () => {
       } else {
         if (!isRunning) {
           isRunning = true;
+          lastTime = performance.now();
+          nextSpawnTime = performance.now() + 600;
           animationFrameId = requestAnimationFrame(render);
         }
       }

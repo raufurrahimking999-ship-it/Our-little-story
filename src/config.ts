@@ -4,7 +4,7 @@
  * Default song: Hawayein — Arijit Singh (bundled inside public/audio/hawayein.mp3)
  * =========================================================================
  */
-export const DEFAULT_LOCAL_AUDIO_PATH = '/audio/our_song.mp3';
+export const DEFAULT_LOCAL_AUDIO_PATH = '/audio/hawayein.mp3';
 export const YOUTUBE_SONG_URL = DEFAULT_LOCAL_AUDIO_PATH;
 
 /**

@@ -1,21 +1,30 @@
 import { registerPlugin, Capacitor } from '@capacitor/core';
 
 export interface PickedMediaResultItem {
+  id: string;
   name: string;
   type: 'image' | 'video' | 'file';
   mimeType: string;
   size: number;
-  base64Data: string;
+  encryptedPath: string;
+  dateAdded: number;
+  thumbnailUrl?: string;
+  base64Data?: string;
 }
 
 interface VaultStoragePluginInterface {
+  setSessionKey(options: { keyBase64: string }): Promise<{ success: boolean }>;
+  clearSessionKey(): Promise<{ success: boolean }>;
+  checkMediaPermissions(): Promise<{ granted: boolean }>;
+  requestMediaPermissions(): Promise<{ granted: boolean }>;
+  pickMediaFiles(): Promise<{ cancelled?: boolean; count?: number; items: PickedMediaResultItem[] }>;
+  readDecryptedMedia(options: { fileId?: string; filePath?: string }): Promise<{ success: boolean; isStream?: boolean; base64Data?: string; streamUrl?: string; size: number }>;
   writeEncryptedFile(options: { fileId: string; base64Data: string }): Promise<{ success: boolean; verified: boolean; filePath: string; size: number }>;
-  readEncryptedFile(options: { filePath?: string; fileId?: string }): Promise<{ success: boolean; base64Data: string; size: number }>;
   deleteEncryptedFile(options: { filePath?: string; fileId?: string }): Promise<{ success: boolean; deleted: boolean }>;
   deleteEncryptedFilesBatch(options: { filePaths: string[] }): Promise<{ success: boolean }>;
-  checkVaultFile(options: { filePath?: string; fileId?: string }): Promise<{ exists: boolean; size: number; filePath?: string }>;
+  saveManifest(options: { manifest: string }): Promise<{ success: boolean }>;
+  loadManifest(): Promise<{ exists: boolean; manifest: string }>;
   cleanupTemp(): Promise<{ success: boolean }>;
-  pickMediaFiles(): Promise<{ items: PickedMediaResultItem[] }>;
 }
 
 const VaultStorage = registerPlugin<VaultStoragePluginInterface>('VaultStorage');
@@ -25,19 +34,110 @@ export class VaultStorageNativeService {
     return Capacitor.isNativePlatform();
   }
 
+  public async setSessionKey(keyBase64: string): Promise<boolean> {
+    if (this.isNative()) {
+      try {
+        const res = await VaultStorage.setSessionKey({ keyBase64 });
+        return Boolean(res && res.success);
+      } catch (e) {
+        console.warn('VaultStorage setSessionKey error:', e);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  public async clearSessionKey(): Promise<boolean> {
+    if (this.isNative()) {
+      try {
+        await VaultStorage.clearSessionKey();
+      } catch {}
+    }
+    return true;
+  }
+
+  public async checkMediaPermissions(): Promise<boolean> {
+    if (this.isNative()) {
+      try {
+        const res = await VaultStorage.checkMediaPermissions();
+        return Boolean(res && res.granted);
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  public async requestMediaPermissions(): Promise<boolean> {
+    if (this.isNative()) {
+      try {
+        const res = await VaultStorage.requestMediaPermissions();
+        return Boolean(res && res.granted);
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /**
-   * Writes AES-GCM encrypted bytes (.enc) directly into private internal app storage.
+   * Opens Android native system media picker and streams encrypted files to app-private storage.
+   */
+  public async pickMediaFiles(): Promise<{ cancelled: boolean; items: PickedMediaResultItem[] }> {
+    if (this.isNative()) {
+      try {
+        const res = await VaultStorage.pickMediaFiles();
+        return {
+          cancelled: Boolean(res && res.cancelled),
+          items: (res && res.items) || [],
+        };
+      } catch (err) {
+        console.warn('Native picker error:', err);
+        return { cancelled: false, items: [] };
+      }
+    }
+    return { cancelled: false, items: [] };
+  }
+
+  /**
+   * Reads and decrypts a media file for secure in-memory viewing.
+   */
+  public async readDecryptedMedia(fileId: string, filePath?: string): Promise<{ success: boolean; isStream?: boolean; base64Data?: string; streamUrl?: string; size: number }> {
+    if (this.isNative()) {
+      try {
+        const res = await VaultStorage.readDecryptedMedia({ fileId, filePath });
+        return {
+          success: Boolean(res && res.success),
+          isStream: Boolean(res && res.isStream),
+          base64Data: res?.base64Data,
+          streamUrl: res?.streamUrl,
+          size: res?.size || 0,
+        };
+      } catch (err) {
+        console.warn('Failed to read decrypted media:', err);
+        return { success: false, size: 0 };
+      }
+    }
+    return { success: false, size: 0 };
+  }
+
+  /**
+   * Writes AES-GCM encrypted bytes (.enc) into private internal app storage.
    */
   public async writeEncryptedFile(fileId: string, base64Data: string): Promise<{ success: boolean; filePath: string; size: number }> {
     if (this.isNative()) {
-      const res = await VaultStorage.writeEncryptedFile({ fileId, base64Data });
-      return {
-        success: Boolean(res && res.verified),
-        filePath: res.filePath,
-        size: res.size,
-      };
+      try {
+        const res = await VaultStorage.writeEncryptedFile({ fileId, base64Data });
+        return {
+          success: Boolean(res && res.verified),
+          filePath: res.filePath,
+          size: res.size,
+        };
+      } catch (err) {
+        console.warn('writeEncryptedFile error:', err);
+        return { success: false, filePath: '', size: 0 };
+      }
     }
-
     return {
       success: true,
       filePath: `idb://vault_encrypted/${fileId}.enc`,
@@ -46,12 +146,16 @@ export class VaultStorageNativeService {
   }
 
   /**
-   * Reads AES-GCM encrypted bytes from private internal storage.
+   * Reads raw encrypted bytes (.enc) from private internal app storage.
    */
   public async readEncryptedFile(fileId: string, filePath?: string): Promise<string> {
     if (this.isNative()) {
-      const res = await VaultStorage.readEncryptedFile({ fileId, filePath });
-      return res?.base64Data || '';
+      try {
+        const res = await VaultStorage.readDecryptedMedia({ fileId, filePath });
+        return res?.base64Data || '';
+      } catch {
+        return '';
+      }
     }
     return '';
   }
@@ -88,13 +192,13 @@ export class VaultStorageNativeService {
   }
 
   /**
-   * Checks if an encrypted file exists and is valid.
+   * Backs up items manifest directly to internal Android storage.
    */
-  public async verifyFileExists(fileId: string, filePath?: string): Promise<boolean> {
+  public async saveManifest(manifestJson: string): Promise<boolean> {
     if (this.isNative()) {
       try {
-        const res = await VaultStorage.checkVaultFile({ fileId, filePath });
-        return Boolean(res && res.exists);
+        const res = await VaultStorage.saveManifest({ manifest: manifestJson });
+        return Boolean(res && res.success);
       } catch {
         return false;
       }
@@ -103,23 +207,25 @@ export class VaultStorageNativeService {
   }
 
   /**
-   * Opens Android native media picker and streams selected items.
+   * Loads secondary manifest from internal Android storage.
    */
-  public async pickMediaFiles(): Promise<PickedMediaResultItem[]> {
+  public async loadManifest(): Promise<{ exists: boolean; manifest: string }> {
     if (this.isNative()) {
       try {
-        const res = await VaultStorage.pickMediaFiles();
-        return res?.items || [];
-      } catch (err) {
-        console.warn('Native picker error:', err);
-        return [];
+        const res = await VaultStorage.loadManifest();
+        return {
+          exists: Boolean(res && res.exists),
+          manifest: res?.manifest || '[]',
+        };
+      } catch {
+        return { exists: false, manifest: '[]' };
       }
     }
-    return [];
+    return { exists: false, manifest: '[]' };
   }
 
   /**
-   * Wipes any lingering temp files.
+   * Wipes temporary decrypted streaming files.
    */
   public async cleanupTemp(): Promise<void> {
     if (this.isNative()) {

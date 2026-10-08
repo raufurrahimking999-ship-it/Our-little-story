@@ -126,15 +126,10 @@ class AudioPlayerService {
       }
     } catch {}
 
-    if (!Capacitor.isNativePlatform()) {
-      this.songUrl = DEFAULT_LOCAL_AUDIO_PATH;
-      this.songName = RELATIONSHIP_CONFIG.songName || 'Our Special Song';
-      this.duration = 291.0;
-    } else {
-      this.songUrl = '';
-      this.songName = 'Select a song to play';
-      this.duration = 0;
-    }
+    this.songUrl = DEFAULT_LOCAL_AUDIO_PATH;
+    this.songName = 'Hawayein — Arijit Singh & Pritam';
+    this.duration = 291.0;
+    this.isCustom = false;
   }
 
   private saveLastPlayedSong(data: {
@@ -345,8 +340,26 @@ class AudioPlayerService {
   }
 
   public async play(): Promise<void> {
+    if (!this.songUrl) {
+      this.songUrl = DEFAULT_LOCAL_AUDIO_PATH;
+      this.songName = 'Hawayein — Arijit Singh & Pritam';
+      this.duration = 291.0;
+    }
+
     if (Capacitor.isNativePlatform()) {
       try {
+        const state = await NativeAudio.getState();
+        if (!state.url || state.url.length === 0) {
+          await this.setSong(
+            this.songUrl,
+            this.songName,
+            'Arijit Singh & Pritam',
+            'Jab Harry Met Sejal',
+            this.duration,
+            0
+          );
+          return;
+        }
         await NativeAudio.resume();
         this.isPlaying = true;
         this.hasError = false;
@@ -357,6 +370,9 @@ class AudioPlayerService {
       return;
     }
 
+    if (!this.audioElement) {
+      this.initHTMLAudio(this.songUrl);
+    }
     if (this.audioElement) {
       try {
         await this.audioElement.play();

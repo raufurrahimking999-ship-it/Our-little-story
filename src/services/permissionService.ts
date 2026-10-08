@@ -56,10 +56,16 @@ class PermissionService {
     try {
       // 1. Check Filesystem / Storage permission via PermissionBridge
       const bridgeRes = await PermissionBridge.checkAudioPermission();
-      audioStatus = bridgeRes.status;
+      if (bridgeRes && bridgeRes.status) {
+        audioStatus = bridgeRes.status;
+        if (audioStatus === 'granted') {
+          localStorage.setItem('rls_audio_perm_granted', 'true');
+        } else {
+          localStorage.removeItem('rls_audio_perm_granted');
+        }
+      }
     } catch (e) {
       console.warn('Error checking audio permission via bridge:', e);
-      // Fallback
       if (localStorage.getItem('rls_audio_perm_granted') === 'true') {
         audioStatus = 'granted';
       }
@@ -148,10 +154,13 @@ class PermissionService {
 
     try {
       const res = await PermissionBridge.requestAudioPermission();
-      if (res.granted) {
+      const granted = Boolean(res && res.granted);
+      if (granted) {
         localStorage.setItem('rls_audio_perm_granted', 'true');
+      } else {
+        localStorage.removeItem('rls_audio_perm_granted');
       }
-      return res.granted;
+      return granted;
     } catch {
       return false;
     }

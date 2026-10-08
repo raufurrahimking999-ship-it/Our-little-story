@@ -12,29 +12,25 @@ export interface SongItem {
   isBuiltIn?: boolean;
 }
 
-export const WEB_PREVIEW_SONG: SongItem = {
-  id: 'preview-our-song',
-  title: RELATIONSHIP_CONFIG.songName || 'Our Special Song',
-  artist: RELATIONSHIP_CONFIG.coupleSignature,
-  album: 'Our Little Story',
+export const BUNDLED_HAWAYEIN_SONG: SongItem = {
+  id: 'bundled-hawayein',
+  title: 'Hawayein',
+  artist: 'Arijit Singh & Pritam',
+  album: 'Jab Harry Met Sejal',
   duration: 291,
   url: DEFAULT_LOCAL_AUDIO_PATH,
   isBuiltIn: true,
 };
 
+export const WEB_PREVIEW_SONG: SongItem = BUNDLED_HAWAYEIN_SONG;
+
 class LocalMusicService {
-  private songs: SongItem[] = [];
+  private songs: SongItem[] = [BUNDLED_HAWAYEIN_SONG];
   private subscribers = new Set<(songs: SongItem[]) => void>();
   private isScanning = false;
 
   constructor() {
-    if (!Capacitor.isNativePlatform()) {
-      // In browser preview, supply web preview song
-      this.songs = [WEB_PREVIEW_SONG];
-    } else {
-      // On native Android, starts empty until scanned from device
-      this.songs = [];
-    }
+    this.songs = [BUNDLED_HAWAYEIN_SONG];
   }
 
   /**
@@ -53,21 +49,19 @@ class LocalMusicService {
 
         if (scanResult && Array.isArray(scanResult.songs)) {
           const scannedSongs: SongItem[] = scanResult.songs;
-          // Device songs only, zero hardcoded demo songs
-          this.songs = scannedSongs;
+          // Bundled Hawayein song is always preserved at index 0, followed by all device songs
+          this.songs = [BUNDLED_HAWAYEIN_SONG, ...scannedSongs];
           
-          if (scannedSongs.length > 0) {
-            // Register full playlist with native MediaSession / ExoPlayer engine
-            try {
-              await NativeAudio.setPlaylist({
-                songs: scannedSongs,
-                startIndex: 0,
-                startPositionSeconds: 0,
-                playImmediately: false,
-              });
-            } catch (e) {
-              console.warn('Error syncing playlist to native engine:', e);
-            }
+          // Register full playlist with native MediaSession / ExoPlayer engine
+          try {
+            await NativeAudio.setPlaylist({
+              songs: this.songs,
+              startIndex: 0,
+              startPositionSeconds: 0,
+              playImmediately: false,
+            });
+          } catch (e) {
+            console.warn('Error syncing playlist to native engine:', e);
           }
 
           this.notify();
@@ -80,8 +74,8 @@ class LocalMusicService {
       this.isScanning = false;
     }
 
-    if (!Capacitor.isNativePlatform() && this.songs.length === 0) {
-      this.songs = [WEB_PREVIEW_SONG];
+    if (this.songs.length === 0) {
+      this.songs = [BUNDLED_HAWAYEIN_SONG];
     }
 
     this.notify();

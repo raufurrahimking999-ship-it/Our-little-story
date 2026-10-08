@@ -367,6 +367,27 @@ export class VaultCryptoEngine {
   public isUnlocked(): boolean {
     return this.activeMasterKey !== null;
   }
+
+  public getRawMasterKeyBytes(): Uint8Array | null {
+    return this.rawMasterKeyBytes;
+  }
+
+  public async restoreSessionMasterKey(raw: Uint8Array): Promise<boolean> {
+    try {
+      const masterKey = await crypto.subtle.importKey(
+        'raw',
+        raw.buffer as ArrayBuffer,
+        { name: 'AES-GCM', length: 256 },
+        true,
+        ['encrypt', 'decrypt']
+      );
+      this.activeMasterKey = masterKey;
+      this.rawMasterKeyBytes = new Uint8Array(raw);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export const vaultCrypto = new VaultCryptoEngine();
