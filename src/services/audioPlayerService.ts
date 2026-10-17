@@ -13,6 +13,7 @@
 
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { RELATIONSHIP_CONFIG, DEFAULT_LOCAL_AUDIO_PATH } from '../config';
+import { localMusicService } from './localMusicService';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -116,12 +117,18 @@ class AudioPlayerService {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.title) {
-          this.songUrl = parsed.url || '';
-          this.songName = parsed.title;
-          this.duration = parsed.duration > 0 ? parsed.duration : 0;
-          this.lastKnownTime = parsed.position > 0 ? parsed.position : 0;
-          this.isCustom = true;
-          return;
+          const titleLower = String(parsed.title).toLowerCase();
+          const urlLower = String(parsed.url || '').toLowerCase();
+          if (titleLower.includes('our special song') || urlLower.includes('our_song')) {
+            localStorage.removeItem('our_story_last_song');
+          } else {
+            this.songUrl = parsed.url || '';
+            this.songName = parsed.title;
+            this.duration = parsed.duration > 0 ? parsed.duration : 0;
+            this.lastKnownTime = parsed.position > 0 ? parsed.position : 0;
+            this.isCustom = true;
+            return;
+          }
         }
       }
     } catch {}
@@ -219,6 +226,78 @@ class AudioPlayerService {
 
     if (this.songUrl) {
       this.initHTMLAudio(this.songUrl);
+    }
+  }
+
+  private hasAutoplayTriggered = false;
+
+  /**
+   * Automatically starts playing the bundled Hawayein song on app startup.
+   * Safe against multiple invocations, screen switches, and component re-renders.
+   */
+  public async autoplayBundledSong(): Promise<void> {
+    if (this.hasAutoplayTriggered) return;
+    this.hasAutoplayTriggered = true;
+
+    if (this.isPlaying) return;
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const state = await NativeAudio.getState();
+        if (state && state.isPlaying) {
+          this.applyNativeState(state);
+          return;
+        }
+      } catch {}
+
+      const allSongs = localMusicService.getSongs();
+      const defaultSong = allSongs[0] || {
+        id: 'bundled-hawayein',
+        title: 'Hawayein',
+        artist: 'Arijit Singh & Pritam',
+        album: 'Jab Harry Met Sejal',
+        duration: 291.0,
+        url: DEFAULT_LOCAL_AUDIO_PATH,
+        isBuiltIn: true,
+      };
+
+      await this.setSong(
+        defaultSong.url,
+        `${defaultSong.title} — ${defaultSong.artist}`,
+        defaultSong.artist,
+        defaultSong.album,
+        defaultSong.duration,
+        0,
+        allSongs
+      );
+      return;
+    }
+
+    // Web fallback environment
+    try {
+      if (!this.songUrl) {
+        this.songUrl = DEFAULT_LOCAL_AUDIO_PATH;
+        this.songName = 'Hawayein — Arijit Singh & Pritam';
+        this.duration = 291.0;
+      }
+      this.initHTMLAudio(this.songUrl);
+      if (this.audioElement) {
+        const p = this.audioElement.play();
+        if (p !== undefined) {
+          p.catch((err) => {
+            console.log('Web autoplay waiting for user interaction:', err.name);
+            const resumeOnGesture = () => {
+              this.audioElement?.play().catch(() => {});
+              window.removeEventListener('pointerdown', resumeOnGesture);
+              window.removeEventListener('keydown', resumeOnGesture);
+            };
+            window.addEventListener('pointerdown', resumeOnGesture, { once: true });
+            window.addEventListener('keydown', resumeOnGesture, { once: true });
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Web autoplay init error:', e);
     }
   }
 
@@ -350,13 +429,15 @@ class AudioPlayerService {
       try {
         const state = await NativeAudio.getState();
         if (!state.url || state.url.length === 0) {
+          const list = localMusicService.getSongs();
           await this.setSong(
-            this.songUrl,
-            this.songName,
+            this.songUrl || DEFAULT_LOCAL_AUDIO_PATH,
+            this.songName || 'Hawayein — Arijit Singh & Pritam',
             'Arijit Singh & Pritam',
             'Jab Harry Met Sejal',
-            this.duration,
-            0
+            this.duration || 291.0,
+            0,
+            list
           );
           return;
         }
@@ -536,7 +617,7 @@ class AudioPlayerService {
           album: album || 'Local Music',
           duration: this.duration,
           index: index ?? -1,
-          songs: songsList,
+          songs: songsList || localMusicService.getSongs(),
         });
         this.isPlaying = true;
         this.isLoading = false;

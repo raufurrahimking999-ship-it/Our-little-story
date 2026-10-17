@@ -35,7 +35,7 @@ export const RELATIONSHIP_CONFIG = {
   coupleSignature: 'Ripti ♡ Raufur',
 
   // Song details
-  songName: 'Our Special Song — Our Little Story',
+  songName: 'Hawayein — Arijit Singh & Pritam',
   youtubeUrl: DEFAULT_LOCAL_AUDIO_PATH,
   audioPath: DEFAULT_LOCAL_AUDIO_PATH,
   audioFallbackPath: DEFAULT_LOCAL_AUDIO_PATH,

@@ -49,30 +49,34 @@ public class NativeAudioPlayerManager {
     private static boolean isShuffle = false;
     private static boolean hasPlaybackError = false;
 
+    public static synchronized int getPlaylistSize() {
+        return playlist.size();
+    }
+
     /**
-     * Extracts bundled Hawayein mp3 to app's private files directory if needed.
+     * Extracts bundled mp3 (Hawayein) to app's private files directory if needed.
      * Guarantees 100% reliable local file descriptor playback, random seeking, and zero network dependency.
      */
-    public static synchronized File getOrExtractBundledAudio(Context context) {
+    public static synchronized File getOrExtractBundledAudio(Context context, String requestedPath) {
         if (context == null) return null;
         try {
             File dir = new File(context.getFilesDir(), "bundled_audio");
             if (!dir.exists()) {
                 dir.mkdirs();
             }
-            File targetFile = new File(dir, "hawayein.mp3");
 
-            // If file exists and is intact (> 1MB), return it immediately
-            if (targetFile.exists() && targetFile.length() > 1000000) {
+            String fileName = "hawayein.mp3";
+            File targetFile = new File(dir, fileName);
+
+            // If file exists and is intact (> 500KB), return it immediately
+            if (targetFile.exists() && targetFile.length() > 500000) {
                 return targetFile;
             }
 
-            // Asset paths to try
-            String[] possibleAssetPaths = {
+            // Asset paths to try in order of priority
+            String[] possibleAssetPaths = new String[]{
                 "public/audio/hawayein.mp3",
-                "public/audio/our_song.mp3",
-                "audio/hawayein.mp3",
-                "audio/our_song.mp3"
+                "audio/hawayein.mp3"
             };
 
             for (String assetPath : possibleAssetPaths) {
@@ -124,12 +128,13 @@ public class NativeAudioPlayerManager {
             return trimmed;
         }
 
-        // 5. Bundled track (Hawayein / our_song / local audio asset)
-        if (trimmed.contains("hawayein") || trimmed.contains("our_song") || trimmed.contains("/audio/")) {
-            File localFile = getOrExtractBundledAudio(context);
+        // 5. Bundled track (Hawayein / local audio asset)
+        if (trimmed.contains("hawayein") || trimmed.contains("/audio/")) {
+            File localFile = getOrExtractBundledAudio(context, trimmed);
             if (localFile != null && localFile.exists() && localFile.length() > 0) {
                 return Uri.fromFile(localFile).toString();
             }
+            return "asset:///public/audio/hawayein.mp3";
         }
 
         // 6. Localhost URL from WebView
@@ -320,7 +325,8 @@ public class NativeAudioPlayerManager {
         // Check if song exists in current playlist
         for (int i = 0; i < playlist.size(); i++) {
             SongData s = playlist.get(i);
-            if (s.url.equals(url) || (title != null && !title.isEmpty() && s.title.equalsIgnoreCase(title))) {
+            boolean urlMatch = s.url.equals(url) || (url != null && !url.isEmpty() && (s.url.endsWith(url) || url.endsWith(s.url)));
+            if (urlMatch || (title != null && !title.isEmpty() && s.title.equalsIgnoreCase(title))) {
                 playSongAtIndex(context, i);
                 return;
             }
@@ -337,8 +343,8 @@ public class NativeAudioPlayerManager {
         ExoPlayer p = getPlayer(context);
         if (p != null) {
             if (p.getMediaItemCount() == 0) {
-                // Initialize default Hawayein track
-                SongData defaultSong = new SongData(
+                // Initialize default bundled playlist with Hawayein
+                SongData defaultHawayein = new SongData(
                     "bundled-hawayein",
                     "Hawayein",
                     "Arijit Singh & Pritam",
@@ -347,7 +353,7 @@ public class NativeAudioPlayerManager {
                     291.0
                 );
                 List<SongData> list = new ArrayList<>();
-                list.add(defaultSong);
+                list.add(defaultHawayein);
                 setPlaylist(context, list, 0, 0, true);
                 return;
             }

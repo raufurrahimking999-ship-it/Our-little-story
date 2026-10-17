@@ -5,16 +5,15 @@ interface HeartParticle {
   y: number;
   size: number;
   speedY: number;
-  driftX: number;
-  swayFreq: number;
-  swayPhase: number;
-  swayAmp: number;
+  baseDriftX: number;
+  wanderPhase1: number;
+  wanderFreq1: number;
+  wanderAmp1: number;
+  wanderPhase2: number;
+  wanderFreq2: number;
+  wanderAmp2: number;
   maxOpacity: number;
   hue: number;
-  rotation: number;
-  scaleVar: number;
-  scalePhase: number;
-  fadeLimitTop: number; // variable altitude where heart begins fading out
 }
 
 interface StardustParticle {
@@ -65,116 +64,123 @@ export const BackgroundAura: React.FC = () => {
     window.addEventListener('resize', setupCanvasSize);
 
     // =========================================================================
-    // 1. REFINED FLOATING HEARTS (Individual Organic Spawning & Natural Flow)
+    // 1. REFINED FLOATING HEARTS (Strictly Upward, Natural Drift, Upright)
     // =========================================================================
-    // Elegant palette: midnight-blue, icy lavender, soft violet, whisper of rose
+    // Romantic palette: midnight-blue, icy lavender, soft violet, whisper of rose
     const heartHues = [225, 240, 255, 270, 330, 345];
 
-    interface HeartParticle {
-      x: number;
-      y: number;
-      size: number;
-      speedY: number;
-      driftX: number;
-      swayFreq: number;
-      swayPhase: number;
-      swayAmp: number;
-      maxOpacity: number;
-      hue: number;
-      rotation: number;
-      rotSwayAmp: number;
-      scaleVar: number;
-      scalePhase: number;
-    }
-
     const getMaxHearts = () => {
-      // Natural, uncluttered capacity tuned for slow, graceful drifting
-      return Math.min(10, Math.max(5, Math.floor(width / 60)));
+      // Balanced, uncluttered capacity tuned for serene, graceful ascension
+      return Math.min(9, Math.max(5, Math.floor(width / 60)));
     };
 
     let lastSpawnX = width * 0.5;
 
-    const createSingleHeart = (initialSpread = false, customY?: number): HeartParticle => {
-      // Natural size variation (8.5px to 17px)
-      const size = 8.5 + Math.random() * 8.5;
-      const depthFactor = (size - 8.5) / 8.5; // 0.0 (distant) to 1.0 (foreground)
+    // Smart spacing algorithm to prevent hearts from bunching or rising side-by-side
+    const findSpacedSpawnX = (existingHearts: HeartParticle[]): number => {
+      const lowerHearts = existingHearts.filter((h) => h.y > height * 0.55);
+      let bestX = 28 + Math.random() * (width - 56);
+      let bestDist = -1;
 
-      // Randomized horizontal position avoiding clustering near recent spawns
-      let x = 24 + Math.random() * (width - 48);
-      if (!initialSpread && Math.abs(x - lastSpawnX) < 45) {
-        // Shift away if too close to last spawn location
-        x = (x + width * 0.45) % (width - 48) + 24;
+      for (let i = 0; i < 14; i++) {
+        const candidateX = 28 + Math.random() * (width - 56);
+        let minDist = Math.abs(candidateX - lastSpawnX);
+        for (const h of lowerHearts) {
+          const d = Math.abs(candidateX - h.x);
+          if (d < minDist) minDist = d;
+        }
+        if (minDist > bestDist) {
+          bestDist = minDist;
+          bestX = candidateX;
+        }
       }
-      lastSpawnX = x;
 
-      // Start position: initial scattered screen presence on mount, or strictly below bottom
+      lastSpawnX = bestX;
+      return bestX;
+    };
+
+    const createSingleHeart = (
+      initialSpread = false,
+      customX?: number,
+      customY?: number
+    ): HeartParticle => {
+      // Natural size variation (9px to 17.5px)
+      const size = 9 + Math.random() * 8.5;
+      const depthFactor = (size - 9) / 8.5; // 0.0 (distant) to 1.0 (foreground)
+
+      // Horizontal coordinate
+      let x: number;
+      if (customX !== undefined) {
+        x = customX;
+      } else if (!initialSpread) {
+        x = findSpacedSpawnX(activeHearts);
+      } else {
+        x = 28 + Math.random() * (width - 56);
+      }
+
+      // Vertical start position: initial scattered screen presence on mount, or strictly below bottom
       let y: number;
       if (initialSpread) {
         y = customY !== undefined ? customY : Math.random() * (height * 0.85);
       } else {
-        y = height + size + 8 + Math.random() * 25;
+        y = height + size + 8 + Math.random() * 24;
       }
 
-      // Natural, slow and graceful upward floating speed
-      const speedY = 0.09 + depthFactor * 0.04 + Math.random() * 0.05;
-      const driftX = (Math.random() - 0.5) * 0.05;
+      // Strictly upward floating speed for every heart (always positive, gentle and continuous)
+      const speedY = 0.20 + depthFactor * 0.08 + Math.random() * 0.08;
 
-      // Ultra-smooth, slow organic sway mechanics (gentle breeze effect)
-      const swayFreq = 0.006 + Math.random() * 0.008;
-      const swayPhase = Math.random() * Math.PI * 2;
-      const swayAmp = 0.22 + Math.random() * 0.28;
+      // Independent horizontal drift: some left, some right, some almost vertical
+      // Independent of screen position (hearts on right don't automatically go right, etc.)
+      const baseDriftX = (Math.random() - 0.5) * 0.20;
 
-      // Atmospheric opacity: tightly controlled (0.16 to 0.22) for smooth natural blending
-      const maxOpacity = 0.16 + depthFactor * 0.06;
+      // Ultra-slow, smooth harmonic wandering for gradual, natural drift evolution
+      // Low frequencies eliminate rapid side-to-side oscillation, shaking, or repetitive waves
+      const wanderPhase1 = Math.random() * Math.PI * 2;
+      const wanderFreq1 = 0.0014 + Math.random() * 0.0016;
+      const wanderAmp1 = 0.06 + Math.random() * 0.06;
+
+      const wanderPhase2 = Math.random() * Math.PI * 2;
+      const wanderFreq2 = 0.0026 + Math.random() * 0.0020;
+      const wanderAmp2 = 0.03 + Math.random() * 0.04;
+
+      // Controlled atmospheric opacity for natural integration
+      const maxOpacity = 0.18 + depthFactor * 0.06;
       const hue = heartHues[Math.floor(Math.random() * heartHues.length)];
-      const rotation = (Math.random() - 0.5) * 0.12; // Natural tilt
-      const rotSwayAmp = 0.04 + Math.random() * 0.04;
-
-      const scaleVar = 0.015 + Math.random() * 0.015;
-      const scalePhase = Math.random() * Math.PI * 2;
 
       return {
         x,
         y,
         size,
         speedY,
-        driftX,
-        swayFreq,
-        swayPhase,
-        swayAmp,
+        baseDriftX,
+        wanderPhase1,
+        wanderFreq1,
+        wanderAmp1,
+        wanderPhase2,
+        wanderFreq2,
+        wanderAmp2,
         maxOpacity,
         hue,
-        rotation,
-        rotSwayAmp,
-        scaleVar,
-        scalePhase,
       };
     };
 
-    // Initialize with only a small, gracefully spaced set of hearts across the screen
-    // so the canvas has subtle ambiance immediately without any sudden burst or cluster
-    const initialHeartCount = Math.min(6, Math.max(3, Math.floor(getMaxHearts() * 0.6)));
+    // Initialize with spaced hearts across separate vertical & horizontal zones
+    // ensures instant aesthetic ambiance on app launch without clumping
+    const initialHeartCount = Math.min(6, Math.max(3, Math.floor(getMaxHearts() * 0.65)));
     let activeHearts: HeartParticle[] = [];
+    const laneWidth = (width - 64) / Math.max(1, initialHeartCount);
     for (let i = 0; i < initialHeartCount; i++) {
-      const staggeredY = (height * 0.15) + (i / initialHeartCount) * (height * 0.7) + (Math.random() - 0.5) * 40;
-      activeHearts.push(createSingleHeart(true, staggeredY));
+      const laneX = 32 + i * laneWidth + Math.random() * (laneWidth * 0.7);
+      const staggeredY = (height * 0.15) + (i / initialHeartCount) * (height * 0.65) + (Math.random() - 0.5) * 30;
+      activeHearts.push(createSingleHeart(true, laneX, staggeredY));
     }
 
-    // Randomized spawn interval generator for natural pacing
+    // Randomized spawn interval generator for natural pacing (one by one)
     const getNextSpawnDelay = () => {
-      const roll = Math.random();
-      if (roll < 0.20) {
-        // Occasional gentle pause / natural gap with no new heart
-        return 3200 + Math.random() * 2000; // 3.2s - 5.2s gap
-      } else if (roll < 0.35) {
-        // Occasional smooth follower
-        return 1200 + Math.random() * 800; // 1.2s - 2.0s
-      }
-      // Standard organic interval
-      return 1800 + Math.random() * 1600; // 1.8s - 3.4s
+      return 2200 + Math.random() * 2000; // 2.2s - 4.2s natural interval
     };
 
-    let nextSpawnTime = performance.now() + 1000; // First new spawn shortly after mount
+    let nextSpawnTime = performance.now() + 1200; // First new bottom spawn shortly after launch
 
     // =========================================================================
     // 2. ETHEREAL STARDUST PARTICLES (Delicate, Non-Pulsing Luminous Motes)
@@ -208,21 +214,20 @@ export const BackgroundAura: React.FC = () => {
     );
 
     // =========================================================================
-    // 3. CANVAS DRAWING ROUTINES (Subtle 3D Glossy Translucent Glass Heart)
+    // 3. CANVAS DRAWING ROUTINES (Upright 3D Glossy Translucent Glass Heart)
     // =========================================================================
     const drawSoftHeart = (
       x: number,
       y: number,
       size: number,
       opacity: number,
-      hue: number,
-      rotation: number
+      hue: number
     ) => {
       if (opacity <= 0.002) return;
 
       ctx.save();
       ctx.translate(x, y);
-      ctx.rotate(rotation);
+      // Strictly upright orientation (no rotation, tilt, or distortion)
 
       // Disable shadow blur to avoid blooming or accidental brightness flashes
       ctx.shadowBlur = 0;
@@ -301,7 +306,6 @@ export const BackgroundAura: React.FC = () => {
     };
 
     let lastTime = performance.now();
-    let tick = 0;
 
     const render = (now: number) => {
       if (!isRunning) return;
@@ -309,7 +313,6 @@ export const BackgroundAura: React.FC = () => {
       const dt = Math.min(50, Math.max(8, now - lastTime));
       lastTime = now;
       const dtFactor = dt / 16.667; // Normalized to 60fps
-      tick += dtFactor;
 
       ctx.clearRect(0, 0, width, height);
 
@@ -341,43 +344,55 @@ export const BackgroundAura: React.FC = () => {
         drawStardust(s);
       }
 
-      // 2. Update & Draw Floating Hearts (Graceful individual ascension)
+      // 2. Update & Draw Floating Hearts (Graceful individual upward ascension)
       const remainingHearts: HeartParticle[] = [];
 
       for (let i = 0; i < activeHearts.length; i++) {
         const p = activeHearts[i];
 
-        // Smooth vertical ascension
+        // Smooth vertical ascension: strictly upward travel for every heart
         p.y -= p.speedY * dtFactor;
 
-        // Individualized organic sway & drift
-        p.swayPhase += p.swayFreq * dtFactor;
-        p.x += (p.driftX + Math.sin(p.swayPhase) * p.swayAmp) * dtFactor;
+        // Individual organic wandering drift (smooth compound harmonic variations)
+        p.wanderPhase1 += p.wanderFreq1 * dtFactor;
+        p.wanderPhase2 += p.wanderFreq2 * dtFactor;
+        let currentDriftX =
+          p.baseDriftX +
+          Math.sin(p.wanderPhase1) * p.wanderAmp1 +
+          Math.cos(p.wanderPhase2) * p.wanderAmp2;
 
-        // Soft natural scale and tilt variation (slow and serene)
-        const currentScale = p.size * (1 + Math.sin(p.scalePhase + tick * 0.008) * p.scaleVar);
-        const currentRot = p.rotation + Math.sin(p.swayPhase * 0.75) * p.rotSwayAmp;
+        // Soft boundary guidance: smoothly ease inward if nearing viewport sides
+        if (p.x < 32 && currentDriftX < 0) {
+          currentDriftX *= Math.max(0, (p.x - 12) / 20);
+          p.baseDriftX = Math.abs(p.baseDriftX) * 0.4;
+        } else if (p.x > width - 32 && currentDriftX > 0) {
+          currentDriftX *= Math.max(0, (width - 12 - p.x) / 20);
+          p.baseDriftX = -Math.abs(p.baseDriftX) * 0.4;
+        }
+
+        p.x += currentDriftX * dtFactor;
 
         // Remove naturally once departed past top bounds
-        if (p.y < -35 || p.x < -50 || p.x > width + 50) {
+        if (p.y < -35 || p.x < -40 || p.x > width + 40) {
           continue;
         }
 
         // Natural edge fade only at extreme bottom entry and extreme top exit
         let opacityFactor = 1.0;
-        const bottomFadeLimit = height - 10;
+        const bottomFadeLimit = height - 12;
         const topFadeLimit = 35;
 
         if (p.y > bottomFadeLimit) {
-          opacityFactor = Math.max(0, (height + p.size - p.y) / (p.size + 10));
+          opacityFactor = Math.max(0, (height + p.size - p.y) / (p.size + 12));
         } else if (p.y < topFadeLimit) {
           opacityFactor = Math.max(0, p.y / topFadeLimit);
         }
 
-        if (p.y > height + p.size + 15) opacityFactor = 0;
+        if (p.y > height + p.size + 20) opacityFactor = 0;
 
         const currentOpacity = p.maxOpacity * opacityFactor;
-        drawSoftHeart(p.x, p.y, currentScale, currentOpacity, p.hue, currentRot);
+        // Upright, consistent shape with no rotation, tilt, or distortion
+        drawSoftHeart(p.x, p.y, p.size, currentOpacity, p.hue);
 
         remainingHearts.push(p);
       }
@@ -415,24 +430,37 @@ export const BackgroundAura: React.FC = () => {
   }, []);
 
   return (
-    <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] pointer-events-none overflow-hidden z-0 bg-[#040711]">
-      {/* Deep Midnight Navy & Indigo Base Gradient (Consistent single-tone romantic background) */}
+    <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] pointer-events-none overflow-hidden z-0 bg-[#030611] isolate">
+      {/* Deep Midnight Navy Base (Cinematic, pure, noise-free foundation) */}
       <div 
-        className="absolute inset-0 w-full h-full bg-gradient-to-b from-[#05091a] via-[#040714] to-[#040711] pointer-events-none" 
+        className="absolute inset-0 w-full h-full bg-gradient-to-b from-[#040817] via-[#030612] to-[#02040b] pointer-events-none" 
       />
 
-      {/* Balanced Ambient Glows (Evenly distributed across top & bottom viewport for zero two-tone split) */}
+      {/* Elegant Midnight Aurora Ambient Glows (Smooth quadratic radial falloffs, no rings, banding, or downsampling) */}
+      
+      {/* 1. Grand Midnight Sapphire Aurora Veil (XL: ~780px - 920px) - Expansive soft atmospheric illumination */}
       <div 
-        className="absolute top-[5%] left-[10%] w-[380px] h-[380px] sm:w-[480px] sm:h-[480px] rounded-full bg-indigo-600/10 blur-[130px] sm:blur-[160px] pointer-events-none" 
+        className="absolute top-0 left-0 w-[780px] h-[780px] sm:w-[920px] sm:h-[920px] rounded-full bg-[radial-gradient(circle_at_center,rgba(30,64,175,0.32)_0%,rgba(30,58,138,0.24)_18%,rgba(23,37,84,0.15)_36%,rgba(15,23,42,0.07)_56%,rgba(4,7,17,0.02)_76%,transparent_100%)] blur-[42px] sm:blur-[54px] animate-glow-journey-1 pointer-events-none" 
       />
+
+      {/* 2. Luminous Arctic Cyan Aurora Ribbon (S-M: ~360px - 440px) - Refined cool cyan luminance accent */}
       <div 
-        className="absolute top-[45%] right-[5%] w-[360px] h-[360px] sm:w-[460px] sm:h-[460px] rounded-full bg-violet-600/10 blur-[130px] sm:blur-[160px] pointer-events-none" 
+        className="absolute top-0 left-0 w-[360px] h-[360px] sm:w-[440px] sm:h-[440px] rounded-full bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.32)_0%,rgba(56,189,248,0.22)_18%,rgba(37,99,235,0.14)_38%,rgba(30,58,138,0.06)_60%,rgba(3,6,17,0.01)_82%,transparent_100%)] blur-[26px] sm:blur-[34px] animate-glow-journey-2 pointer-events-none" 
       />
+
+      {/* 3. Romantic Deep Indigo-Violet Aurora Glow (XXL: ~860px - 1040px) - Warm midnight dusk undertone */}
       <div 
-        className="absolute bottom-[5%] left-[8%] w-[340px] h-[340px] sm:w-[440px] sm:h-[440px] rounded-full bg-blue-600/10 blur-[130px] sm:blur-[160px] pointer-events-none" 
+        className="absolute top-0 left-0 w-[860px] h-[860px] sm:w-[1040px] sm:h-[1040px] rounded-full bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.20)_0%,rgba(79,70,229,0.15)_22%,rgba(67,56,202,0.09)_42%,rgba(49,46,129,0.045)_64%,rgba(17,24,39,0.015)_82%,transparent_100%)] blur-[48px] sm:blur-[60px] animate-glow-journey-3 pointer-events-none" 
       />
+
+      {/* 4. Radiant Pure Cobalt Azure Bloom (M: ~480px - 580px) - Vivid blue core with gentle diffusion */}
       <div 
-        className="absolute bottom-[25%] right-[15%] w-[320px] h-[320px] sm:w-[420px] sm:h-[420px] rounded-full bg-indigo-600/10 blur-[130px] sm:blur-[160px] pointer-events-none" 
+        className="absolute top-0 left-0 w-[480px] h-[480px] sm:w-[580px] sm:h-[580px] rounded-full bg-[radial-gradient(circle_at_center,rgba(37,99,235,0.30)_0%,rgba(59,130,246,0.20)_18%,rgba(29,78,216,0.12)_40%,rgba(30,58,138,0.05)_62%,transparent_100%)] blur-[30px] sm:blur-[40px] animate-glow-journey-4 pointer-events-none" 
+      />
+
+      {/* 5. Celestial Cyan-Blue Aurora Spark (S: ~280px - 340px) - Delicate drifting light accent */}
+      <div 
+        className="absolute top-0 left-0 w-[280px] h-[280px] sm:w-[340px] sm:h-[340px] rounded-full bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.28)_0%,rgba(59,130,246,0.18)_22%,rgba(37,99,235,0.09)_44%,rgba(30,58,138,0.03)_68%,transparent_100%)] blur-[22px] sm:blur-[30px] animate-glow-journey-5 pointer-events-none" 
       />
 
       {/* Dynamic Floating Hearts & Stardust Canvas (Rendered cleanly on top of all background gradients) */}

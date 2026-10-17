@@ -22,15 +22,34 @@ export const BUNDLED_HAWAYEIN_SONG: SongItem = {
   isBuiltIn: true,
 };
 
+export const DEFAULT_BUNDLED_SONGS: SongItem[] = [
+  BUNDLED_HAWAYEIN_SONG,
+];
+
 export const WEB_PREVIEW_SONG: SongItem = BUNDLED_HAWAYEIN_SONG;
 
 class LocalMusicService {
-  private songs: SongItem[] = [BUNDLED_HAWAYEIN_SONG];
+  private songs: SongItem[] = [...DEFAULT_BUNDLED_SONGS];
   private subscribers = new Set<(songs: SongItem[]) => void>();
   private isScanning = false;
 
   constructor() {
-    this.songs = [BUNDLED_HAWAYEIN_SONG];
+    this.songs = [...DEFAULT_BUNDLED_SONGS];
+    if (typeof window !== 'undefined' && Capacitor.isNativePlatform()) {
+      this.initNativePlaylist();
+    }
+  }
+
+  private async initNativePlaylist() {
+    try {
+      const NativeAudio = registerPlugin<any>('NativeAudio');
+      await NativeAudio.setPlaylist({
+        songs: this.songs,
+        startIndex: 0,
+        startPositionSeconds: 0,
+        playImmediately: false,
+      });
+    } catch {}
   }
 
   /**
@@ -49,8 +68,17 @@ class LocalMusicService {
 
         if (scanResult && Array.isArray(scanResult.songs)) {
           const scannedSongs: SongItem[] = scanResult.songs;
-          // Bundled Hawayein song is always preserved at index 0, followed by all device songs
-          this.songs = [BUNDLED_HAWAYEIN_SONG, ...scannedSongs];
+          // Filter out duplicates of the bundled Hawayein track and any stale legacy entries
+          const filteredDeviceSongs = scannedSongs.filter((s) => {
+            const titleLower = (s.title || '').toLowerCase();
+            const urlLower = (s.url || '').toLowerCase();
+            const isHawayeinDup = titleLower.includes('hawayein') || urlLower.includes('hawayein.mp3');
+            const isLegacyOurSong = titleLower.includes('our special song') || urlLower.includes('our_song.mp3');
+            return !isHawayeinDup && !isLegacyOurSong && s.url !== BUNDLED_HAWAYEIN_SONG.url;
+          });
+
+          // Hawayein is the single bundled default song at index 0, followed by genuine device songs
+          this.songs = [BUNDLED_HAWAYEIN_SONG, ...filteredDeviceSongs];
           
           // Register full playlist with native MediaSession / ExoPlayer engine
           try {
@@ -75,7 +103,7 @@ class LocalMusicService {
     }
 
     if (this.songs.length === 0) {
-      this.songs = [BUNDLED_HAWAYEIN_SONG];
+      this.songs = [...DEFAULT_BUNDLED_SONGS];
     }
 
     this.notify();

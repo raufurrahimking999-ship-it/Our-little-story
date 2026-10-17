@@ -17,6 +17,7 @@ export interface VaultItem {
   size: number;
   encryptedPath?: string; // e.g. /data/user/0/.../files/vault_encrypted/<id>.enc
   encryptedBlobBase64?: string; // For web fallback / backup
+  thumbnailUrl?: string; // Persistent 240px JPEG data URL for instant grid rendering
   dataUrl?: string; // In-memory decrypted Blob URL (ephemeral, not persisted)
 }
 
@@ -170,15 +171,37 @@ class VaultService {
       try {
         sessionStorage.setItem('vault_session_unlocked', 'true');
         sessionStorage.setItem('vault_session_key', b64);
+        localStorage.setItem('vault_session_unlocked', 'true');
+        localStorage.setItem('vault_session_key', b64);
       } catch {}
     }
   }
 
   public async tryRestoreSession(): Promise<boolean> {
-    if (this.isUnlocked) return true;
+    if (this.isUnlocked && vaultCrypto.isUnlocked()) return true;
     try {
-      const isSession = sessionStorage.getItem('vault_session_unlocked') === 'true';
-      const keyBase64 = sessionStorage.getItem('vault_session_key');
+      // 1. Check native plugin if on native Android
+      if (vaultStorageNative.isNative()) {
+        const nativeKey = await vaultStorageNative.getSessionKey();
+        if (nativeKey.hasKey && nativeKey.keyBase64) {
+          const rawKey = base64ToBuffer(nativeKey.keyBase64);
+          const restored = await vaultCrypto.restoreSessionMasterKey(rawKey);
+          if (restored) {
+            this.isUnlocked = true;
+            await this.loadItemsFromStore();
+            this.notify();
+            return true;
+          }
+        }
+      }
+
+      // 2. Check storage for session key
+      const isSession =
+        sessionStorage.getItem('vault_session_unlocked') === 'true' ||
+        localStorage.getItem('vault_session_unlocked') === 'true';
+      const keyBase64 =
+        sessionStorage.getItem('vault_session_key') ||
+        localStorage.getItem('vault_session_key');
       if (isSession && keyBase64) {
         const rawKey = base64ToBuffer(keyBase64);
         const restored = await vaultCrypto.restoreSessionMasterKey(rawKey);
@@ -321,6 +344,8 @@ class VaultService {
       sessionStorage.removeItem('vault_session_unlocked');
       sessionStorage.removeItem('vault_session_key');
       sessionStorage.removeItem('vault_is_open');
+      localStorage.removeItem('vault_session_unlocked');
+      localStorage.removeItem('vault_session_key');
     } catch {}
 
     // Revoke all in-memory decrypted Blob URLs to free RAM and ensure privacy
@@ -458,7 +483,13 @@ class VaultService {
       }
     }
 
-    this.cachedItems = items.sort((a, b) => b.dateAdded - a.dateAdded);
+    this.cachedItems = items.map(item => {
+      if (!item.dataUrl && item.thumbnailUrl) {
+        item.dataUrl = item.thumbnailUrl;
+        this.blobUrlCache.set(item.id, item.thumbnailUrl);
+      }
+      return item;
+    }).sort((a, b) => b.dateAdded - a.dateAdded);
 
     // Backup to native manifest
     if (vaultStorageNative.isNative() && this.cachedItems.length > 0) {
@@ -483,6 +514,9 @@ class VaultService {
     pickedItems: PickedMediaResultItem[],
     folderId?: string
   ): Promise<boolean> {
+    if (!this.getUnlockedStatus()) {
+      await this.tryRestoreSession();
+    }
     if (!this.getUnlockedStatus() || !pickedItems || pickedItems.length === 0) return false;
 
     try {
@@ -498,6 +532,7 @@ class VaultService {
           dateAdded: item.dateAdded || Date.now(),
           size: item.size,
           encryptedPath: item.encryptedPath,
+          thumbnailUrl: item.thumbnailUrl,
           dataUrl: item.thumbnailUrl, // Use instant thumbnail for grid display
         };
 
@@ -537,7 +572,12 @@ class VaultService {
 
     try {
       if (vaultStorageNative.isNative()) {
-        const decRes = await vaultStorageNative.readDecryptedMedia(item.id, item.encryptedPath);
+        const decRes = await vaultStorageNative.readDecryptedMedia(
+          item.id,
+          item.encryptedPath,
+          item.type,
+          item.mimeType
+        );
         if (decRes.success) {
           if (decRes.isStream && decRes.streamUrl) {
             this.blobUrlCache.set(item.id, decRes.streamUrl);
@@ -585,6 +625,9 @@ class VaultService {
     rawBytes?: Uint8Array;
     base64Data?: string;
   }): Promise<boolean> {
+    if (!this.getUnlockedStatus()) {
+      await this.tryRestoreSession();
+    }
     if (!this.getUnlockedStatus()) return false;
 
     try {
@@ -715,6 +758,11 @@ class VaultService {
         }
         return item;
       });
+      if (vaultStorageNative.isNative()) {
+        const toSave = this.cachedItems.map(({ dataUrl, ...rest }) => rest);
+        vaultStorageNative.saveManifest(JSON.stringify(toSave)).catch(() => {});
+      }
+      this.notify();
       return true;
     } catch {
       return false;
@@ -753,6 +801,7 @@ class VaultService {
             name: item.name.includes('(Copy)') ? item.name : `${item.name} (Copy)`,
             encryptedPath: newEncryptedPath,
             encryptedBlobBase64: vaultStorageNative.isNative() ? undefined : encryptedBase64,
+            thumbnailUrl: item.thumbnailUrl,
             dataUrl: existingBlobUrl || item.dataUrl,
           };
 
@@ -761,6 +810,11 @@ class VaultService {
         }
       }
       this.cachedItems = [...newCopies, ...this.cachedItems];
+      if (vaultStorageNative.isNative()) {
+        const toSave = this.cachedItems.map(({ dataUrl, ...rest }) => rest);
+        await vaultStorageNative.saveManifest(JSON.stringify(toSave));
+      }
+      this.notify();
       return true;
     } catch {
       return false;
@@ -774,6 +828,11 @@ class VaultService {
       if (!item) return false;
       item.name = newName.trim();
       idbSaveItem(item);
+      if (vaultStorageNative.isNative()) {
+        const toSave = this.cachedItems.map(({ dataUrl, ...rest }) => rest);
+        vaultStorageNative.saveManifest(JSON.stringify(toSave)).catch(() => {});
+      }
+      this.notify();
       return true;
     } catch {
       return false;

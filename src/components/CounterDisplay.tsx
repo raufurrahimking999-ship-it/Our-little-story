@@ -157,44 +157,18 @@ export const CounterDisplay: React.FC = () => {
         </div>
       </div>
 
-      {/* Subtle Romantic Relationship Signature: Ripti ♡ Raufur */}
+      {/* Subtle Romantic Relationship Signature: Ripti & Raufur */}
       <div 
         className="mt-3.5 sm:mt-4 flex items-center justify-center select-none" 
-        aria-label="Ripti ♡ Raufur"
+        aria-label="Ripti & Raufur"
       >
-        <p className="flex items-center gap-2 sm:gap-2.5">
+        <p className="flex items-center gap-3 sm:gap-4">
           <span className="font-romantic text-sm sm:text-base font-normal tracking-[0.20em] text-slate-200/90 drop-shadow-[0_1px_8px_rgba(165,180,252,0.15)]">
             Ripti
           </span>
 
-          {/* Refined Glowing Curved Heart with Soft Rose-Lavender Pulse */}
-          <span className="inline-flex items-center justify-center" aria-hidden="true">
-            <svg
-              viewBox="0 0 24 22"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-heart-pulse transition-transform"
-            >
-              <defs>
-                <linearGradient id="signatureHeartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#fda4af" stopOpacity="0.95" />
-                  <stop offset="50%" stopColor="#d8b4fe" stopOpacity="0.90" />
-                  <stop offset="100%" stopColor="#a5b4fc" stopOpacity="0.85" />
-                </linearGradient>
-                <linearGradient id="signatureHeartFill" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#fda4af" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#c084fc" stopOpacity="0.18" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M12 19.8c-0.3 0-5.8-3.9-8.4-7.5C1.6 9.4 1.7 5.7 4.3 3.6 6.8 1.6 9.8 2.5 12 5.1c2.2-2.6 5.2-3.5 7.7-1.5 2.6 2.1 2.7 5.8 0.7 8.7-2.6 3.6-8.1 7.5-8.4 7.5z"
-                fill="url(#signatureHeartFill)"
-                stroke="url(#signatureHeartGrad)"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+          <span className="text-xs text-indigo-300/40 select-none font-light">
+            &
           </span>
 
           <span className="font-romantic text-sm sm:text-base font-normal tracking-[0.20em] text-slate-200/90 drop-shadow-[0_1px_8px_rgba(165,180,252,0.15)]">

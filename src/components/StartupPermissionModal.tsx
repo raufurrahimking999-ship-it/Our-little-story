@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { permissionService } from '../services/permissionService';
 import { localMusicService } from '../services/localMusicService';
 import { notificationService } from '../services/notificationService';
@@ -8,7 +8,12 @@ interface StartupPermissionModalProps {
 }
 
 export const StartupPermissionModal: React.FC<StartupPermissionModalProps> = ({ onComplete }) => {
+  const hasRunRef = useRef(false);
+
   useEffect(() => {
+    if (hasRunRef.current) return;
+    hasRunRef.current = true;
+
     const runStartupPermissions = async () => {
       try {
         const state = await permissionService.checkPermissions();

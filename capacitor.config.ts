@@ -1,6 +1,6 @@
 const config = {
   appId: 'com.heartbeat.lovecounter',
-  appName: 'Our Little Story ♡',
+  appName: 'Our Little Story',
   webDir: 'dist',
   backgroundColor: '#040711',
   android: {

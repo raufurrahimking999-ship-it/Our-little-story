@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  Lock, KeyRound, Plus, Trash2, Image as ImageIcon, X, Eye, EyeOff, 
-  AlertCircle, Download, Settings, HelpCircle, Folder, FolderPlus, Search, 
-  ArrowLeft, CheckSquare, Square, Play, ArrowRight, Edit3, FolderInput, Copy, Heart,
-  Loader2
+  KeyRound, Download, Folder, Trash2, FolderPlus, Heart, Image as ImageIcon, Video 
 } from 'lucide-react';
 import { vaultService, VaultItem, VaultFolder } from '../services/vaultService';
 import { vaultStorageNative } from '../services/vaultStorageNative';
+import { VaultPhotoViewer } from './VaultPhotoViewer';
 
 interface MemoryVaultGalleryModalProps {
   isOpen: boolean;
@@ -75,12 +73,12 @@ const VaultItemTile: React.FC<{
             )
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-slate-950">
-              <ImageIcon className="w-6 h-6 text-slate-600" />
+              <span className="text-[10px] text-slate-500 font-mono">VIDEO</span>
             </div>
           )}
           <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-            <div className="w-7 h-7 rounded-full bg-indigo-600/90 text-white flex items-center justify-center shadow">
-              <Play className="w-3.5 h-3.5 fill-current" />
+            <div className="px-2 py-0.5 rounded-full bg-indigo-600/90 text-white text-[10px] font-medium shadow tracking-wider">
+              VIDEO
             </div>
           </div>
         </div>
@@ -92,19 +90,17 @@ const VaultItemTile: React.FC<{
         />
       ) : (
         <div className="w-full h-full flex items-center justify-center bg-slate-950 animate-pulse">
-          <ImageIcon className="w-6 h-6 text-slate-700" />
+          <span className="text-[10px] text-slate-500 font-mono">PHOTO</span>
         </div>
       )}
 
       {/* Selection Checkbox */}
       {(isSelectMode || isSelected) && (
         <div className="absolute top-1.5 left-1.5 z-10">
-          <div className="text-white drop-shadow">
-            {isSelected ? (
-              <CheckSquare className="w-5 h-5 text-indigo-400 fill-indigo-950" />
-            ) : (
-              <Square className="w-5 h-5 text-white/80" />
-            )}
+          <div className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] font-bold ${
+            isSelected ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-black/50 border-white/60 text-transparent'
+          }`}>
+            {isSelected ? '✓' : ''}
           </div>
         </div>
       )}
@@ -112,52 +108,6 @@ const VaultItemTile: React.FC<{
   );
 };
 
-const FullscreenViewerMedia: React.FC<{ item: VaultItem }> = ({ item }) => {
-  const [fullUrl, setFullUrl] = useState<string>(item.dataUrl || '');
-  const [loading, setLoading] = useState<boolean>(!item.dataUrl || item.dataUrl.startsWith('data:image'));
-
-  useEffect(() => {
-    let isMounted = true;
-    vaultService.ensureDecryptedDataUrl(item).then((url) => {
-      if (isMounted) {
-        if (url) setFullUrl(url);
-        setLoading(false);
-      }
-    });
-    return () => {
-      isMounted = false;
-    };
-  }, [item.id]);
-
-  if (loading && !fullUrl) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 py-16">
-        <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
-        <span className="text-xs text-indigo-200/80">Opening media securely...</span>
-      </div>
-    );
-  }
-
-  if (item.type === 'video') {
-    return (
-      <video
-        src={fullUrl}
-        controls
-        autoPlay
-        playsInline
-        className="max-h-[80vh] max-w-full rounded-2xl shadow-2xl border border-white/10 object-contain"
-      />
-    );
-  }
-
-  return (
-    <img
-      src={fullUrl}
-      alt={item.name}
-      className="max-h-[80vh] max-w-full rounded-2xl shadow-2xl border border-white/10 object-contain select-none"
-    />
-  );
-};
 
 export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = ({ isOpen, onClose }) => {
   const [hasPass, setHasPass] = useState<boolean>(false);
@@ -239,7 +189,10 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
   const checkPasswordStatus = async () => {
     const exists = await vaultService.hasPassword();
     setHasPass(exists);
-    const currentlyUnlocked = vaultService.getUnlockedStatus();
+    let currentlyUnlocked = vaultService.getUnlockedStatus();
+    if (!currentlyUnlocked) {
+      currentlyUnlocked = await vaultService.tryRestoreSession();
+    }
     setIsUnlocked(currentlyUnlocked);
     if (!exists) {
       setAuthView('create');
@@ -406,27 +359,21 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
   // -------------------------------------------------------------------------
   // MEDIA IMPORT & ENCRYPTION HANDLERS
   // -------------------------------------------------------------------------
-  const handleAddMediaClick = async () => {
+  const handleAddMediaClick = async (preferredType: 'image' | 'video' | 'all' = 'all') => {
     setErrorMsg('');
 
     if (vaultStorageNative.isNative()) {
+      setIsEncrypting(true);
       try {
-        // 1. Check & Request required Android media permissions
-        const hasPerms = await vaultStorageNative.checkMediaPermissions();
-        if (!hasPerms) {
-          const granted = await vaultStorageNative.requestMediaPermissions();
-          if (!granted) {
-            setErrorMsg('Storage permission is required to import photos and videos.');
-            return;
-          }
-        }
-
-        // 2. Launch native media picker & stream encrypted directly to private storage
-        setIsEncrypting(true);
-        const res = await vaultStorageNative.pickMediaFiles();
+        const res = await vaultStorageNative.pickMediaFiles({ mediaType: preferredType });
 
         if (res.cancelled) {
-          // User closed/cancelled the picker. Return cleanly.
+          // User closed/cancelled the picker. Stay on the current vault screen cleanly.
+          return;
+        }
+
+        if (res.error) {
+          setErrorMsg(res.error);
           return;
         }
 
@@ -441,6 +388,8 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
           } else {
             setErrorMsg('Failed to save imported media to Vault database.');
           }
+        } else {
+          setErrorMsg('No photos or videos could be added. Please select valid media files.');
         }
       } catch (err: any) {
         console.error('Vault native media import error:', err);
@@ -452,7 +401,12 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
     }
 
     // Web Fallback (Standard File Picker for desktop/browser only)
-    fileInputRef.current?.click();
+    if (fileInputRef.current) {
+      if (preferredType === 'image') fileInputRef.current.accept = 'image/*';
+      else if (preferredType === 'video') fileInputRef.current.accept = 'video/*';
+      else fileInputRef.current.accept = 'image/*,video/*,application/*,text/*';
+      fileInputRef.current.click();
+    }
   };
 
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -662,28 +616,21 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
         <div className="glass-panel w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-white/10 relative flex flex-col">
           {/* Header */}
           <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-5">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.25)]">
-                <Lock className="w-4 h-4" />
-              </div>
-              <h2 className="text-sm font-semibold tracking-wide text-slate-100 flex items-center gap-1.5">
-                <span>Vault</span>
-                <Heart className="w-3.5 h-3.5 text-rose-400/70 fill-rose-400/20" />
-              </h2>
-            </div>
+            <h2 className="text-sm font-semibold tracking-wide text-slate-100">
+              Vault
+            </h2>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-200 p-1.5 rounded-xl hover:bg-white/5 transition-colors"
+              className="text-slate-400 hover:text-slate-200 px-2.5 py-1 text-xs rounded-xl hover:bg-white/5 transition-colors"
               aria-label="Close"
             >
-              <X className="w-4 h-4" />
+              Close
             </button>
           </div>
 
           {errorMsg && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errorMsg}</span>
+            <div className="mb-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+              {errorMsg}
             </div>
           )}
 
@@ -702,14 +649,14 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
                     onChange={(e) => setPasswordInput(e.target.value)}
                     placeholder="New password (min 4 chars)"
                     autoFocus
-                    className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-900/90 border border-white/10 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400/80 pr-10"
+                    className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-900/90 border border-white/10 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400/80 pr-16"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-[10px] font-mono py-1 px-1.5"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showPassword ? 'Hide' : 'Show'}
                   </button>
                 </div>
                 <input
@@ -752,9 +699,8 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
             /* FORGOT PASSWORD RECOVERY FLOW */
             <div className="space-y-4">
               <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <h3 className="text-sm font-medium text-slate-100 flex items-center gap-2">
-                  <HelpCircle className="w-4 h-4 text-indigo-400" />
-                  <span>Password Recovery</span>
+                <h3 className="text-sm font-medium text-slate-100">
+                  Password Recovery
                 </h3>
                 <button
                   type="button"
@@ -788,7 +734,7 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
               ) : (
                 <form onSubmit={handleResetPasswordAfterRecovery} className="space-y-3">
                   <p className="text-xs text-emerald-300">
-                    ✓ Verified. Enter your new password below.
+                    Verified. Enter your new password below.
                   </p>
                   <input
                     type="password"
@@ -810,10 +756,6 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
           ) : (
             /* UNLOCK SCREEN */
             <form onSubmit={handleUnlock} className="space-y-4 py-2 text-center">
-              <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300 mx-auto shadow-[0_0_15px_rgba(99,102,241,0.2)]">
-                <Lock className="w-6 h-6" />
-              </div>
-
               <div className="relative text-left pt-1">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -821,14 +763,14 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
                   onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="Enter password"
                   autoFocus
-                  className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-900/90 border border-white/10 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400/80 pr-10"
+                  className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-900/90 border border-white/10 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400/80 pr-16"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-[10px] font-mono py-1 px-1.5"
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? 'Hide' : 'Show'}
                 </button>
               </div>
 
@@ -881,31 +823,28 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
                 if (isSettingsView) setGallerySubView('grid');
                 else setActiveFolderId(null);
               }}
-              className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
+              className="px-3 py-1.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-colors text-xs font-medium"
               title="Back"
             >
-              <ArrowLeft className="w-5 h-5" />
+              Back
             </button>
           ) : (
             <button
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
+              className="px-3 py-1.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-colors text-xs font-medium"
               title="Exit"
             >
-              <ArrowLeft className="w-5 h-5" />
+              Exit
             </button>
           )}
 
           <div className="flex items-center gap-2">
-            <h1 className="text-sm font-semibold tracking-wide text-slate-100 flex items-center gap-1.5">
-              <span>
-                {isSettingsView 
-                  ? 'Settings' 
-                  : activeFolderId === null 
-                    ? 'Vault' 
-                    : currentFolder?.name || 'Folder'}
-              </span>
-              <Heart className="w-3.5 h-3.5 text-rose-400/60 fill-rose-400/20" />
+            <h1 className="text-sm font-semibold tracking-wide text-slate-100">
+              {isSettingsView 
+                ? 'Settings' 
+                : activeFolderId === null 
+                  ? 'Vault' 
+                  : currentFolder?.name || 'Folder'}
             </h1>
             <span className="text-xs text-slate-400 font-mono">
               {!isSettingsView && `(${filteredItems.length})`}
@@ -913,10 +852,10 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
           </div>
         </div>
 
-        {/* Right Action Icons / Multi-select Action Bar */}
+        {/* Right Action Buttons / Multi-select Action Bar */}
         <div className="flex items-center gap-1.5">
           {isSelectMode ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-xs font-mono text-indigo-300 mr-1">
                 {selectedItemIds.length} selected
               </span>
@@ -933,68 +872,63 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
                 <>
                   <button
                     onClick={() => setModalAction('copy-items')}
-                    className="p-2 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white shadow-[0_0_12px_rgba(99,102,241,0.3)] transition-colors"
+                    className="px-2.5 py-1.5 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-medium shadow-[0_0_12px_rgba(99,102,241,0.3)] transition-colors"
                     title="Copy to Folder"
                   >
-                    <Copy className="w-4 h-4" />
+                    Copy
                   </button>
                   <button
                     onClick={() => setModalAction('move-items')}
-                    className="p-2 rounded-xl bg-indigo-600 text-white shadow-[0_0_12px_rgba(99,102,241,0.3)] transition-colors"
+                    className="px-2.5 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-medium shadow-[0_0_12px_rgba(99,102,241,0.3)] transition-colors"
                     title="Move to Folder"
                   >
-                    <FolderInput className="w-4 h-4" />
+                    Move
                   </button>
                   <button
                     onClick={onRequestDeleteSelected}
-                    className="p-2 rounded-xl bg-rose-600 text-white shadow-[0_0_12px_rgba(225,29,72,0.3)] transition-colors"
+                    className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-medium shadow-[0_0_12px_rgba(225,29,72,0.3)] transition-colors"
                     title="Delete Selected"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    Delete
                   </button>
                 </>
               )}
 
               <button
                 onClick={() => { setIsSelectMode(false); setSelectedItemIds([]); }}
-                className="p-2 rounded-xl text-slate-400 hover:text-white"
+                className="px-2.5 py-1.5 rounded-xl text-slate-400 hover:text-white text-xs font-medium"
                 title="Exit Selection"
               >
-                <X className="w-4 h-4" />
+                Done
               </button>
             </div>
           ) : isSettingsView ? (
             <button
               onClick={handleLockVault}
-              className="px-3 py-1.5 rounded-xl bg-rose-500/20 text-rose-300 text-xs font-medium flex items-center gap-1.5 active:scale-95 transition-all"
+              className="px-3 py-1.5 rounded-xl bg-rose-500/20 text-rose-300 text-xs font-medium active:scale-95 transition-all"
             >
-              <Lock className="w-3.5 h-3.5" />
-              <span>Lock</span>
+              Lock
             </button>
           ) : (
             <>
-              {/* Add Media (+) */}
+              {/* Add Media */}
               <button
                 type="button"
-                onClick={handleAddMediaClick}
+                onClick={() => handleAddMediaClick('all')}
                 disabled={isEncrypting}
-                className="p-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 transition-colors shadow-[0_0_15px_rgba(99,102,241,0.3)] disabled:opacity-50 active:scale-95"
+                className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-500 transition-colors shadow-[0_0_15px_rgba(99,102,241,0.3)] disabled:opacity-50 active:scale-95"
                 title="Add Media"
               >
-                {isEncrypting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Plus className="w-4 h-4" />
-                )}
+                {isEncrypting ? 'Adding...' : 'Add'}
               </button>
 
               {/* Toggle Search */}
               <button
                 onClick={() => setShowSearch(!showSearch)}
-                className={`p-2 rounded-xl transition-colors ${showSearch ? 'bg-white/10 text-indigo-300' : 'text-slate-300 hover:text-white hover:bg-white/5'}`}
+                className={`px-2.5 py-1.5 rounded-xl text-xs font-medium transition-colors ${showSearch ? 'bg-white/10 text-indigo-300' : 'text-slate-300 hover:text-white hover:bg-white/5'}`}
                 title="Search"
               >
-                <Search className="w-4 h-4" />
+                Search
               </button>
 
               {/* Select Mode Toggle */}
@@ -1010,19 +944,19 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
               {/* Settings */}
               <button
                 onClick={() => setGallerySubView('settings')}
-                className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
+                className="px-2.5 py-1.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 text-xs font-medium transition-colors"
                 title="Settings"
               >
-                <Settings className="w-4 h-4" />
+                Settings
               </button>
 
               {/* Lock */}
               <button
                 onClick={handleLockVault}
-                className="p-2 rounded-xl text-rose-300 hover:text-rose-200 hover:bg-rose-500/10 transition-colors"
+                className="px-2.5 py-1.5 rounded-xl text-rose-300 hover:text-rose-200 hover:bg-rose-500/10 text-xs font-medium transition-colors"
                 title="Lock"
               >
-                <Lock className="w-4 h-4" />
+                Lock
               </button>
             </>
           )}
@@ -1031,20 +965,16 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
 
       {/* Small loading/progress banner during media import */}
       {isEncrypting && (
-        <div className="mx-4 my-2 p-2.5 rounded-2xl bg-indigo-500/15 border border-indigo-400/30 text-indigo-200 text-xs flex items-center justify-center gap-2 animate-pulse shadow-[0_0_15px_rgba(99,102,241,0.2)]">
-          <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+        <div className="mx-4 my-2 p-2.5 rounded-2xl bg-indigo-500/15 border border-indigo-400/30 text-indigo-200 text-xs flex items-center justify-center animate-pulse shadow-[0_0_15px_rgba(99,102,241,0.2)]">
           <span>Importing & encrypting into private Vault...</span>
         </div>
       )}
 
       {errorMsg && !isSettingsView && (
         <div className="mx-4 my-2 p-2.5 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between gap-2 shadow-[0_0_15px_rgba(244,63,94,0.15)]">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-            <span>{errorMsg}</span>
-          </div>
-          <button onClick={() => setErrorMsg('')} className="p-1 hover:text-white">
-            <X className="w-3.5 h-3.5" />
+          <span>{errorMsg}</span>
+          <button onClick={() => setErrorMsg('')} className="px-2 py-0.5 text-xs hover:text-white">
+            Dismiss
           </button>
         </div>
       )}
@@ -1272,29 +1202,44 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
 
             {/* Photos & Videos Grid */}
             {filteredItems.length === 0 ? (
-              <div className="py-24 text-center space-y-4">
+              <div className="py-20 text-center space-y-4 px-4">
                 <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-300 mx-auto shadow-[0_0_20px_rgba(244,63,94,0.15)]">
                   <Heart className="w-6 h-6 fill-rose-500/20" />
                 </div>
-                <button
-                  onClick={handleAddMediaClick}
-                  disabled={isEncrypting}
-                  className="px-4 py-2 text-xs font-medium text-white bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.25)] mt-2 inline-flex items-center gap-1.5 active:scale-95 transition-all"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add Photos / Videos</span>
-                </button>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-slate-100">Your Vault is Empty</h3>
+                  <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                    Safely import and encrypt photos and videos to keep them private.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                  <button
+                    onClick={() => handleAddMediaClick('image')}
+                    disabled={isEncrypting}
+                    className="px-4 py-2.5 text-xs font-medium text-white bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.25)] inline-flex items-center gap-1.5 active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span>Add Photos</span>
+                  </button>
+                  <button
+                    onClick={() => handleAddMediaClick('video')}
+                    disabled={isEncrypting}
+                    className="px-4 py-2.5 text-xs font-medium text-white bg-gradient-to-r from-rose-600 to-pink-500 hover:from-rose-500 hover:to-pink-400 rounded-xl shadow-[0_0_15px_rgba(244,63,94,0.25)] inline-flex items-center gap-1.5 active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    <Video className="w-3.5 h-3.5" />
+                    <span>Add Videos</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                {filteredItems.map((item) => {
+                {filteredItems.map((item, filteredIdx) => {
                   const isSelected = selectedItemIds.includes(item.id);
-                  const globalIdx = items.findIndex(i => i.id === item.id);
                   return (
                     <VaultItemTile
                       key={item.id}
                       item={item}
-                      globalIdx={globalIdx}
+                      globalIdx={filteredIdx}
                       isSelected={isSelected}
                       isSelectMode={isSelectMode}
                       onItemClick={handleItemClick}
@@ -1311,74 +1256,24 @@ export const MemoryVaultGalleryModal: React.FC<MemoryVaultGalleryModalProps> = (
       </div>
 
       {/* ------------------------------------------------------------------------- */}
-      {/* FULL-SCREEN MEDIA VIEWER */}
+      {/* FULL-SCREEN INTERACTIVE PHOTO VIEWER (Zoom, Pinch, Pan, Swipe) */}
       {/* ------------------------------------------------------------------------- */}
-      {viewerItemIndex !== null && items[viewerItemIndex] && (
-        <div
-          className="fixed inset-0 z-[70] bg-black/95 backdrop-blur-2xl flex flex-col items-center justify-between p-4 pt-[calc(10px+env(safe-area-inset-top,0px))] pb-[calc(14px+env(safe-area-inset-bottom,0px))] animate-digit-fade"
-          onClick={() => setViewerItemIndex(null)}
-        >
-          {/* Top Viewer Bar */}
-          <div className="w-full max-w-4xl flex items-center justify-between py-2 text-slate-200 z-10" onClick={(e) => e.stopPropagation()}>
-            <span className="text-xs font-mono truncate max-w-[200px]">{items[viewerItemIndex].name}</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const item = items[viewerItemIndex];
-                  setTargetItemForModal(item);
-                  setModalInputVal(item.name);
-                  setModalAction('rename-item');
-                }}
-                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
-                title="Rename"
-              >
-                <Edit3 className="w-4 h-4" />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const item = items[viewerItemIndex];
-                  setTargetItemForModal(item);
-                  setModalAction('confirm-delete-single');
-                }}
-                className="p-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 transition-colors"
-                title="Delete"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setViewerItemIndex(null)}
-                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Center Media display */}
-          <div className="relative flex-1 w-full max-w-4xl flex items-center justify-center overflow-hidden my-auto" onClick={(e) => e.stopPropagation()}>
-            <FullscreenViewerMedia item={items[viewerItemIndex]} />
-
-            {/* Prev / Next navigation */}
-            {viewerItemIndex > 0 && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setViewerItemIndex(viewerItemIndex - 1); }}
-                className="absolute left-2 p-3 rounded-full bg-black/60 hover:bg-black text-white border border-white/10 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-            )}
-            {viewerItemIndex < items.length - 1 && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setViewerItemIndex(viewerItemIndex + 1); }}
-                className="absolute right-2 p-3 rounded-full bg-black/60 hover:bg-black text-white border border-white/10 transition-colors"
-              >
-                <ArrowRight className="w-5 h-5" />
-              </button>
-            )}
-          </div>
-        </div>
+      {viewerItemIndex !== null && filteredItems[viewerItemIndex] && (
+        <VaultPhotoViewer
+          items={filteredItems}
+          initialIndex={viewerItemIndex}
+          isOpen={viewerItemIndex !== null}
+          onClose={() => setViewerItemIndex(null)}
+          onRenameItem={(item) => {
+            setTargetItemForModal(item);
+            setModalInputVal(item.name);
+            setModalAction('rename-item');
+          }}
+          onDeleteItem={(item) => {
+            setTargetItemForModal(item);
+            setModalAction('confirm-delete-single');
+          }}
+        />
       )}
 
       {/* ------------------------------------------------------------------------- */}

@@ -14,11 +14,12 @@ export interface PickedMediaResultItem {
 
 interface VaultStoragePluginInterface {
   setSessionKey(options: { keyBase64: string }): Promise<{ success: boolean }>;
+  getSessionKey(): Promise<{ hasKey: boolean; keyBase64?: string }>;
   clearSessionKey(): Promise<{ success: boolean }>;
   checkMediaPermissions(): Promise<{ granted: boolean }>;
   requestMediaPermissions(): Promise<{ granted: boolean }>;
-  pickMediaFiles(): Promise<{ cancelled?: boolean; count?: number; items: PickedMediaResultItem[] }>;
-  readDecryptedMedia(options: { fileId?: string; filePath?: string }): Promise<{ success: boolean; isStream?: boolean; base64Data?: string; streamUrl?: string; size: number }>;
+  pickMediaFiles(options?: { mediaType?: 'image' | 'video' | 'all' }): Promise<{ cancelled?: boolean; count?: number; items: PickedMediaResultItem[] }>;
+  readDecryptedMedia(options: { fileId?: string; filePath?: string; type?: string; mimeType?: string }): Promise<{ success: boolean; isStream?: boolean; base64Data?: string; streamUrl?: string; size: number }>;
   writeEncryptedFile(options: { fileId: string; base64Data: string }): Promise<{ success: boolean; verified: boolean; filePath: string; size: number }>;
   deleteEncryptedFile(options: { filePath?: string; fileId?: string }): Promise<{ success: boolean; deleted: boolean }>;
   deleteEncryptedFilesBatch(options: { filePaths: string[] }): Promise<{ success: boolean }>;
@@ -45,6 +46,21 @@ export class VaultStorageNativeService {
       }
     }
     return true;
+  }
+
+  public async getSessionKey(): Promise<{ hasKey: boolean; keyBase64?: string }> {
+    if (this.isNative()) {
+      try {
+        const res = await VaultStorage.getSessionKey();
+        return {
+          hasKey: Boolean(res && res.hasKey),
+          keyBase64: res?.keyBase64,
+        };
+      } catch (e) {
+        return { hasKey: false };
+      }
+    }
+    return { hasKey: false };
   }
 
   public async clearSessionKey(): Promise<boolean> {
@@ -83,17 +99,17 @@ export class VaultStorageNativeService {
   /**
    * Opens Android native system media picker and streams encrypted files to app-private storage.
    */
-  public async pickMediaFiles(): Promise<{ cancelled: boolean; items: PickedMediaResultItem[] }> {
+  public async pickMediaFiles(options?: { mediaType?: 'image' | 'video' | 'all' }): Promise<{ cancelled: boolean; items: PickedMediaResultItem[]; error?: string }> {
     if (this.isNative()) {
       try {
-        const res = await VaultStorage.pickMediaFiles();
+        const res = await VaultStorage.pickMediaFiles(options || {});
         return {
           cancelled: Boolean(res && res.cancelled),
           items: (res && res.items) || [],
         };
-      } catch (err) {
+      } catch (err: any) {
         console.warn('Native picker error:', err);
-        return { cancelled: false, items: [] };
+        return { cancelled: false, items: [], error: err?.message || 'Failed to pick media files' };
       }
     }
     return { cancelled: false, items: [] };
@@ -102,10 +118,15 @@ export class VaultStorageNativeService {
   /**
    * Reads and decrypts a media file for secure in-memory viewing.
    */
-  public async readDecryptedMedia(fileId: string, filePath?: string): Promise<{ success: boolean; isStream?: boolean; base64Data?: string; streamUrl?: string; size: number }> {
+  public async readDecryptedMedia(
+    fileId: string,
+    filePath?: string,
+    type?: string,
+    mimeType?: string
+  ): Promise<{ success: boolean; isStream?: boolean; base64Data?: string; streamUrl?: string; size: number }> {
     if (this.isNative()) {
       try {
-        const res = await VaultStorage.readDecryptedMedia({ fileId, filePath });
+        const res = await VaultStorage.readDecryptedMedia({ fileId, filePath, type, mimeType });
         return {
           success: Boolean(res && res.success),
           isStream: Boolean(res && res.isStream),

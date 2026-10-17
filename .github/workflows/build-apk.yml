@@ -23,8 +23,17 @@ jobs:
       - name: Setup Node.js Environment
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: 'npm'
+
+      - name: Setup Java Development Kit (JDK 21)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Install NPM Dependencies
         run: |
@@ -37,26 +46,39 @@ jobs:
       - name: Build Web Application
         run: npm run build
 
-      - name: Setup Java Development Kit (JDK 21)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Verify Java Version
-        run: java -version
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-
-      - name: Restore or Sync Capacitor Android Platform
+      - name: Verify Web Build Artifacts
         run: |
-          if [ ! -d "android" ] || [ ! -f "android/gradlew" ]; then
-            echo "Capacitor Android platform or gradlew missing. Restoring Android platform..."
-            rm -rf android
-            npx cap add android
+          echo "Verifying web build outputs in dist/..."
+          if [ ! -f "dist/index.html" ]; then
+            echo "ERROR: dist/index.html was not generated!"
+            exit 1
+          fi
+          if [ ! -f "dist/audio/hawayein.mp3" ]; then
+            echo "ERROR: dist/audio/hawayein.mp3 is missing!"
+            exit 1
+          fi
+          echo "Web build verified successfully."
+
+      - name: Sync Capacitor Android Platform
+        run: |
+          if [ ! -d "android" ]; then
+            echo "ERROR: android platform directory is missing from repository!"
+            exit 1
           fi
           npx cap sync android
+
+      - name: Verify Android Packaged Assets
+        run: |
+          echo "Verifying Android assets in android/app/src/main/assets/public/..."
+          if [ ! -f "android/app/src/main/assets/public/index.html" ]; then
+            echo "ERROR: android/app/src/main/assets/public/index.html missing after cap sync!"
+            exit 1
+          fi
+          if [ ! -f "android/app/src/main/assets/public/audio/hawayein.mp3" ]; then
+            echo "ERROR: android/app/src/main/assets/public/audio/hawayein.mp3 missing after cap sync!"
+            exit 1
+          fi
+          echo "Android assets verified successfully."
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x android/gradlew
@@ -66,7 +88,24 @@ jobs:
           cd android
           ./gradlew assembleDebug --stacktrace
 
+      - name: Verify Generated APK
+        run: |
+          APK_FILE="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK_FILE" ]; then
+            echo "ERROR: Expected APK output at $APK_FILE not found!"
+            exit 1
+          fi
+          echo "Successfully verified built APK: $(ls -lh $APK_FILE)"
+
       - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: our-little-story-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Compatibility APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: heartbeat-love-counter-debug-apk
