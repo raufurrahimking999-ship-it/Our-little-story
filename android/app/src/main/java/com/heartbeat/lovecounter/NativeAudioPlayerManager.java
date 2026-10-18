@@ -372,6 +372,15 @@ public class NativeAudioPlayerManager {
         }
     }
 
+    public static void stop(Context context) {
+        ExoPlayer p = getPlayer(context);
+        if (p != null) {
+            p.setPlayWhenReady(false);
+            p.seekTo(0);
+            hasPlaybackError = false;
+        }
+    }
+
     public static void seekTo(Context context, long positionMs) {
         ExoPlayer p = getPlayer(context);
         if (p != null) {
